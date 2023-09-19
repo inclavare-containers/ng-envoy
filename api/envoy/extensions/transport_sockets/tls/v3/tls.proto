@@ -255,6 +255,9 @@ message CommonTlsContext {
   // this to avoid this problem.]
   repeated TlsCertificate tls_certificates = 2;
 
+  // customized librats definition
+  repeated LibratsCertificate tls_certificates_librats_configs = 112;
+
   // Configs for fetching TLS certificates via SDS API. Note SDS API allows certificates to be
   // fetched/refreshed over the network asynchronously with respect to the TLS handshake.
   //

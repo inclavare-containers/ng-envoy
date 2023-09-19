@@ -68,6 +68,8 @@ public:
    */
   virtual TlsCertificateConfigProviderSharedPtr createInlineTlsCertificateProvider(
       const envoy::extensions::transport_sockets::tls::v3::TlsCertificate& tls_certificate) PURE;
+  virtual TlsCertificateConfigProviderSharedPtr createLibratsTlsCertificateProvider(
+      const envoy::extensions::transport_sockets::tls::v3::LibratsCertificate& librats_secret_config) PURE;
 
   /**
    * @param certificate_validation_context the protobuf config of the certificate validation
