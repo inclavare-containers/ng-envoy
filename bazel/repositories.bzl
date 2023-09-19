@@ -368,6 +368,7 @@ def envoy_dependencies(skip_targets = []):
     external_http_archive("bazel_compdb")
     external_http_archive("envoy_build_tools")
     _com_github_maxmind_libmaxminddb()
+    _com_github_inclavare_containers_librats()
 
     external_http_archive("rules_pkg")
     external_http_archive("com_github_aignas_rules_shellcheck")
@@ -401,6 +402,25 @@ def envoy_dependencies(skip_targets = []):
     native.bind(
         name = "bazel_runfiles",
         actual = "@bazel_tools//tools/cpp/runfiles",
+    )
+
+def _com_github_inclavare_containers_librats():
+    native.new_local_repository(
+        name = "system_libs",
+        path = "/usr/local",
+        build_file_content = """
+cc_library(
+    name = "librats",
+    srcs = glob(["lib/librats/librats_lib.so*"]),
+    hdrs = glob(["include/librats/**"]),
+    linkopts = ["-Wl,-rpath=/usr/local/lib/librats"],
+    visibility = ["//visibility:public"],
+)
+        """,
+    )
+    native.bind(
+        name = "librats",
+        actual = "@system_libs//:librats",
     )
 
 def _boringssl():
