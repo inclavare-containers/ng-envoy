@@ -97,6 +97,7 @@ const envoy::extensions::transport_sockets::tls::v3::TlsCertificate* LibratsTlsC
     rats_cert_subject_t subject_name;
     subject_name.organization = "Inclavare Containers";  
     subject_name.common_name = "LibRATS";
+    subject_name.organization_unit = nullptr;
 
     claim_t claims[64];
     [[maybe_unused]] size_t claims_length = 0, i=0;
