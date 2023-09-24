@@ -15,7 +15,8 @@ namespace Secret {
 class LibratsTlsCertificateConfigProviderImpl : public TlsCertificateConfigProvider {
 public:
   LibratsTlsCertificateConfigProviderImpl(
-      const envoy::extensions::transport_sockets::tls::v3::LibratsCertificate& tls_certificates_librats_config);
+      const envoy::extensions::transport_sockets::tls::v3::LibratsCertificate&
+          tls_certificates_librats_config);
 
   const envoy::extensions::transport_sockets::tls::v3::TlsCertificate* secret() const override;
 

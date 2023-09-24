@@ -35,7 +35,7 @@ namespace Extensions {
 namespace TransportSockets {
 namespace Tls {
 
-class LibratsCertValidator : public DefaultCertValidator{
+class LibratsCertValidator : public DefaultCertValidator {
 public:
   LibratsCertValidator(const Envoy::Ssl::CertificateValidationContextConfig* config,
                        SslStats& stats, TimeSource& time_source);
