@@ -253,10 +253,13 @@ message TlsCertificate {
   repeated config.core.v3.DataSource signed_certificate_timestamp = 5;
 }
 
-message LibratsCertificate{
+message LibratsCertificate {
   string log_level = 1;
+
   string attester = 2;
+
   bool provide_endorsements = 3;
+
   map<string, string> custom_claims = 4;
 }
 
