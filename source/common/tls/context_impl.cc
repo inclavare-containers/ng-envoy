@@ -169,7 +169,7 @@ ContextImpl::ContextImpl(Stats::Scope& scope, const Envoy::Ssl::ContextConfig& c
       }
     }
   }
-  std::cout << std::endl <<"to locate where called" << std::endl << std::endl;
+
   auto verify_mode = cert_validator_->initializeSslContexts(
       ssl_contexts, config.capabilities().provides_certificates);
   if (!capabilities_.verifies_peer_certificates) {
@@ -201,7 +201,6 @@ ContextImpl::ContextImpl(Stats::Scope& scope, const Envoy::Ssl::ContextConfig& c
     for (uint32_t i = 0; i < tls_certificates.size(); ++i) {
       auto& ctx = tls_contexts_[i];
       // Load certificate chain.
-      std::cout <<"DDDDDDAFALT CERT COME HERE!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" << std::endl;
       const auto& tls_certificate = tls_certificates[i].get();
       if (!tls_certificate.pkcs12().empty()) {
         ctx.loadPkcs12(tls_certificate.pkcs12(), tls_certificate.pkcs12Path(),

@@ -370,7 +370,7 @@ EXTENSIONS = {
     #
 
     "envoy.tls.cert_validator.spiffe":                  "//source/extensions/transport_sockets/tls/cert_validator/spiffe:config",
-    
+
     #
     # HTTP header formatters
     #

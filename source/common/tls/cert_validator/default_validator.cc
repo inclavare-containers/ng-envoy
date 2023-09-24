@@ -9,9 +9,6 @@
 #include <string>
 #include <vector>
 
-#include "envoy/extensions/transport_sockets/tls/v3/tls_librats_config.pb.h"
-#include "source/common/protobuf/message_validator_impl.h"
-
 #include "envoy/network/transport_socket.h"
 #include "envoy/ssl/context.h"
 #include "envoy/ssl/context_config.h"
