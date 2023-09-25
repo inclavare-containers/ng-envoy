@@ -1,61 +1,44 @@
 #include "source/extensions/transport_sockets/tls/cert_validator/librats_validator.h"
 
 #include <array>
-#include <cstdint>
-#include <deque>
 #include <functional>
 #include <string>
 #include <vector>
-
-#include "envoy/extensions/transport_sockets/tls/v3/tls_librats_config.pb.h"
-#include "source/common/protobuf/message_validator_impl.h"
+#include <map>
 
 #include "envoy/network/transport_socket.h"
 #include "envoy/ssl/context.h"
 #include "envoy/ssl/context_config.h"
 #include "envoy/ssl/private_key/private_key.h"
 #include "envoy/ssl/ssl_socket_extended_info.h"
+#include "envoy/extensions/transport_sockets/tls/v3/tls_librats_config.pb.h"
 
 #include "source/common/common/assert.h"
-#include "source/common/common/base64.h"
 #include "source/common/common/fmt.h"
 #include "source/common/common/hex.h"
-#include "source/common/common/matchers.h"
-#include "source/common/common/utility.h"
 #include "source/common/config/utility.h"
-#include "source/common/network/address_impl.h"
-#include "source/common/protobuf/utility.h"
-#include "source/common/runtime/runtime_features.h"
-#include "source/common/stats/symbol_table.h"
-#include "source/common/stats/utility.h"
+#include "source/common/protobuf/message_validator_impl.h"
 #include "source/extensions/transport_sockets/tls/cert_validator/cert_validator.h"
 #include "source/extensions/transport_sockets/tls/cert_validator/factory.h"
 #include "source/extensions/transport_sockets/tls/cert_validator/utility.h"
 #include "source/extensions/transport_sockets/tls/stats.h"
 #include "source/extensions/transport_sockets/tls/utility.h"
 
-#include "absl/synchronization/mutex.h"
-#include "openssl/ssl.h"
-#include "openssl/pem.h"
 #include "openssl/bio.h"
 #include "openssl/x509v3.h"
+#include "librats/api.h"
 
 namespace Envoy {
 namespace Extensions {
 namespace TransportSockets {
 namespace Tls {
+using LibratsCertValidatorConfig =
+    envoy::extensions::transport_sockets::tls::v3::LibratsCertValidatorConfig;
 
 LibratsCertValidator::LibratsCertValidator(
     const Envoy::Ssl::CertificateValidationContextConfig* config, SslStats& stats,
     TimeSource& time_source)
-    : DefaultCertValidator(config, stats, time_source), config_(config), stats_(stats),
-      time_source_(time_source) {
-  if (config_ != nullptr) {
-    allow_untrusted_certificate_ = config_->trustChainVerification() ==
-                                   envoy::extensions::transport_sockets::tls::v3::
-                                       CertificateValidationContext::ACCEPT_UNTRUSTED;
-  }
-};
+    : DefaultCertValidator(config, stats, time_source), config_(config), stats_(stats){};
 
 int LibratsCertValidator::initializeSslContexts(std::vector<SSL_CTX*> contexts,
                                                 bool provides_certificates) {
@@ -64,204 +47,191 @@ int LibratsCertValidator::initializeSslContexts(std::vector<SSL_CTX*> contexts,
   return SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
 }
 
-void print_claim_value(uint8_t* value, size_t value_size) {
-  bool hex = false;
-  for (size_t i = 0; i < value_size; ++i) {
-    if (!isprint(value[i])) {
-      hex = true;
-      break;
+int verifyClaimsCallback(claim_t* claims_from_peer, size_t claims_from_peer_size, void* args_in) {
+  auto& logger = Envoy::Logger::Registry::getLog(Envoy::Logger::Id::connection);
+
+  auto claims_in_config = *reinterpret_cast<std::map<std::string, std::vector<uint8_t>>*>(args_in);
+  ENVOY_LOG_TO_LOGGER(logger, debug,
+                      "start checking claims, number of cliams from peer: {}, number of claims "
+                      "in user config: {}",
+                      claims_from_peer_size, claims_in_config.size());
+
+  for (size_t i = 0; i < claims_from_peer_size; ++i) {
+    auto it = claims_in_config.find(claims_from_peer[i].name);
+    if (it == claims_in_config.end()) {
+      // if claim name was not found in config, we just skip it.
+      continue;
     }
+    if (it->second.size() != claims_from_peer[i].value_size ||
+        std::equal(it->second.begin(), it->second.end(), claims_from_peer[i].value)) {
+      // or else, the claim value must be equal.
+      ENVOY_LOG_TO_LOGGER(
+          logger, debug,
+          "claim mismatch detected, with claim name: {}\n\t\t\tclaim value from "
+          "peer:\t{}\n\t\t\tcalim value in config:\t{}",
+          it->first, Envoy::Hex::encode(it->second),
+          Envoy::Hex::encode(claims_from_peer[i].value, claims_from_peer[i].value_size));
+      return 1;
+    }
+    claims_in_config.erase(it);
   }
-  if (hex) {
-    printf("(hex)");
-    for (size_t i = 0; i < value_size; ++i) {
-      printf("%02X", value[i]);
+
+  if (!claims_in_config.empty()) {
+    std::vector<std::string> keys;
+    keys.reserve(claims_in_config.size());
+    for (const auto& it : claims_in_config) {
+      keys.push_back(it.first);
     }
-  } else {
-    printf("'%.*s'", static_cast<int>(value_size), value);
+    ENVOY_LOG_TO_LOGGER(
+        logger, debug,
+        "{} claims are found in config but not provided by peer. name of those claims are {}",
+        claims_in_config.size(), keys);
+    return 1;
+  }
+  ENVOY_LOG_TO_LOGGER(logger, debug,
+                      "all claims from the peer match the claims in the configuration file");
+  return 0;
+}
+
+void logSslErrorChain() {
+  while (uint64_t err = ERR_get_error()) {
+    ENVOY_LOG_MISC(debug, "SSL error: {}:{}:{}:{}:{}", err,
+                   absl::NullSafeStringView(ERR_lib_error_string(err)),
+                   absl::NullSafeStringView(ERR_func_error_string(err)), ERR_GET_REASON(err),
+                   absl::NullSafeStringView(ERR_reason_error_string(err)));
   }
 }
 
-int verify_callback(claim_t* claims, size_t claims_size, void* args_in) {
-  int ret = 0;
-  typedef struct {
-    const claim_t* custom_claims;
-    size_t custom_claims_size;
-  } args_t;
-  args_t* args = static_cast<args_t*>(args_in);
+bool x509ToDer(X509* cert, std::string& der_cert) {
+  // Create a BIO object to hold the DER certificate
+  BIO* bio = BIO_new(BIO_s_mem());
+  RELEASE_ASSERT(bio != nullptr, "");
 
-  std::cout << "claims check begin." << std::endl;
-  printf("----------------------------------------\n");
-  std::cout << "claims custom and build-in claims (sys generate): " << std::endl;
-  for (size_t i = 0; i < claims_size; ++i) {
-    printf("claims[%zu] -> name: '%s' value_size: %zu value: ", i, claims[i].name,
-           claims[i].value_size);
-    print_claim_value(claims[i].value, claims[i].value_size);
-    printf("\n");
-  }
-  std::cout << "claims custom and build-in claims (usr provide): " << std::endl;
-  for (size_t i = 0; i < args->custom_claims_size; ++i) {
-    printf("claims[%zu] -> name: '%s' value_size: %zu value: ", i, args->custom_claims[i].name,
-           args->custom_claims[i].value_size);
-    print_claim_value(args->custom_claims[i].value, args->custom_claims[i].value_size);
-    printf("\n");
+  // Write the X509 certificate to the BIO object in DER format
+  if (i2d_X509_bio(bio, cert) != 1) {
+    BIO_free(bio);
+    logSslErrorChain();
+    return false;
   }
 
-  for (size_t i = 0; i < args->custom_claims_size; ++i) {
-    const claim_t* claim = &args->custom_claims[i];
-    bool found = false;
-    for (size_t j = 0; j < claims_size; ++j) {
-      if (!strcmp(claim->name, claims[j].name)) {
-        found = true;
-        if (claim->value_size != claims[j].value_size) {
-          printf("different claim detected -> name: '%s' expected value_size: %zu got: %zu\n",
-                 claim->name, claim->value_size, claims[j].value_size);
-          ret = 1;
-          break;
-        }
-
-        if (memcmp(claim->value, claims[j].value, claim->value_size)) {
-          printf("different claim detected -> name: '%s' value_size: %zu expected value: ",
-                 claim->name, claim->value_size);
-          print_claim_value(claim->value, claim->value_size);
-          printf(" got: ");
-          print_claim_value(claims[j].value, claim->value_size);
-          printf("\n");
-          ret = 1;
-          break;
-        }
-        break;
-      }
-    }
-    if (!found) {
-      printf("different claim detected -> name: '%s' not found\n", claim->name);
-      ret = 1;
-    }
+  // Get the DER certificate from the BIO object
+  BUF_MEM* mem = nullptr;
+  BIO_get_mem_ptr(bio, &mem);
+  if (mem == nullptr) {
+    BIO_free(bio);
+    logSslErrorChain();
+    return false;
   }
-  printf("verify_callback check result:\t%s\n", ret == 0 ? "SUCCESS" : "FAILED");
-  printf("----------------------------------------\n");
-  return ret;
+
+  der_cert = std::string(mem->data, mem->length);
+  BIO_free(bio);
+
+  return true;
 }
-
-using LibratsConfig = envoy::extensions::transport_sockets::tls::v3::LibratsCertValidatorConfig;
 
 ValidationResults LibratsCertValidator::doVerifyCertChain(
     STACK_OF(X509)& cert_chain, Ssl::ValidateResultCallbackPtr /*callback*/,
-    const Network::TransportSocketOptionsConstSharedPtr& transport_socket_options, SSL_CTX& ssl_ctx,
-    const CertValidator::ExtraValidationContext& /*validation_context*/, bool is_server,
-    absl::string_view /*host_name*/) {
+    [[maybe_unused]] const Network::TransportSocketOptionsConstSharedPtr& transport_socket_options,
+    [[maybe_unused]] SSL_CTX& ssl_ctx,
+    const CertValidator::ExtraValidationContext& /*validation_context*/,
+    [[maybe_unused]] bool is_server, absl::string_view /*host_name*/) {
 
-  // get yaml comfig
-  std::cout << "this is librats-client cert validator: " << std::endl;
-  LibratsConfig message;
+  ENVOY_LOG(info, "librats preparing for verifing cert chain");
+
+  LibratsCertValidatorConfig validator_config;
+  // TODO: maybe check if customValidatorConfig is not empty
   Config::Utility::translateOpaqueConfig(config_->customValidatorConfig().value().typed_config(),
-                                         ProtobufMessage::getStrictValidationVisitor(), message);
-  std::cout << "read yaml config end." << std::endl;
+                                         ProtobufMessage::getStrictValidationVisitor(),
+                                         validator_config);
 
-  // conf
-  claim_t claims[64];
-  size_t claims_length = 0;
-  rats_conf_t conf;
-  memset(&conf, 0, sizeof(rats_conf_t));
-  auto& log_level = message.log_level();
+  // TODO: extract duplicate code into a single function
+  // Parse librats log level
+  rats_conf_t conf = {};
+  auto& log_level = validator_config.log_level();
   if (log_level == "debug") {
     conf.log_level = RATS_LOG_LEVEL_DEBUG;
-    std::cout << "log_level set: RATS_LOG_LEVEL_DEBUG" << std::endl;
+  } else if (log_level == "info") {
+    conf.log_level = RATS_LOG_LEVEL_INFO;
+  } else if (log_level == "warn") {
+    conf.log_level = RATS_LOG_LEVEL_WARN;
+  } else if (log_level == "error") {
+    conf.log_level = RATS_LOG_LEVEL_ERROR;
+  } else if (log_level == "fatal") {
+    conf.log_level = RATS_LOG_LEVEL_FATAL;
+  } else if (log_level == "off") {
+    conf.log_level = RATS_LOG_LEVEL_NONE;
   } else {
+    if (!log_level.empty()) {
+      ENVOY_LOG(warn, "bad librats logging level '{}', default level will be selected", log_level);
+    }
     conf.log_level = RATS_LOG_LEVEL_DEFAULT;
-    std::cout << "log_level set: RATS_LOG_LEVEL_DEFAULT" << std::endl;
   }
-  for (const auto& static_policy : message.static_policy()) {
-    if (static_policy.verifier() == "tdx") {
-      // std::strncpy(conf.verifier_type, static_policy.verifier().c_str(),
-      // sizeof(conf.verifier_type) - 1); std::cout <<"attester set: tdx" << std::endl;
-    } else {
-      // std::strncpy(conf.verifier_type, "tdx", sizeof(conf.verifier_type) - 1);
-      std::cout << "attester set: nullattester" << std::endl;
+  ENVOY_LOG(debug, "librats: conf.log_level: {}", conf.log_level);
+
+  auto& static_policy = validator_config.static_policy();
+
+  // set verifier type
+  strncpy(conf.verifier_type, static_policy.verifier().c_str(), sizeof(conf.verifier_type) - 1);
+  ENVOY_LOG(debug, "librats: conf.verifier_type: {}", conf.verifier_type);
+
+  std::map<std::string, std::vector<uint8_t>> claims;
+  for (const auto& claim : static_policy.claims()) {
+    // Convert claim value from hex ("0102030a0b0c") to bytes
+    auto value = Envoy::Hex::decode(claim.second);
+    if (!claim.second.empty() && value.empty()) {
+      stats_.fail_verify_error_.inc();
+      auto error =
+          fmt::format("failed to parsing value of claim with name '{}' as hex string", claim.first);
+      ENVOY_LOG(debug, error);
+      return ValidationResults{ValidationResults::ValidationStatus::Failed,
+                               Envoy::Ssl::ClientValidationStatus::Failed, absl::nullopt, error};
     }
-    std::cout << "verifier: " << static_policy.verifier() << std::endl;
-    claims_length = static_cast<size_t>(static_policy.claims_size());
-    std::cout << "claim_size: " << static_policy.claims_size() << std::endl;
-    for (const auto& yaml_claims : static_policy.claims()) {
-      std::string str1(yaml_claims.first);
-      std::string str2(yaml_claims.second);
-      char* name = new char[str1.length() + 1];
-      std::strcpy(name, str1.c_str());
-      claims->name = name;
-      delete[] name;
-      claims->value = reinterpret_cast<uint8_t*>(str2.data());
-      claims->value_size = static_cast<size_t>(yaml_claims.second.length());
-      std::cout << "name: " << yaml_claims.first << std::endl;
-      std::cout << "value: " << yaml_claims.second << std::endl;
-      std::cout << "value_length: " << yaml_claims.second.length() << std::endl;
-    }
+    claims[claim.first] = value;
   }
 
-  // claims
-  typedef struct {
-    const claim_t* custom_claims;
-    size_t custom_claims_size;
-  } args_t;
-  args_t args;
-  args.custom_claims = claims;
-  args.custom_claims_size = claims_length;
+  // get certificate and convert to DER format
+  if (sk_X509_num(&cert_chain) != 1) {
+    stats_.fail_verify_error_.inc();
+    auto error = fmt::format("verify cert failed: depth of cert chain chould be 1, but got {}",
+                             sk_X509_num(&cert_chain));
+    ENVOY_LOG(debug, error);
+    return ValidationResults{ValidationResults::ValidationStatus::Failed,
+                             Envoy::Ssl::ClientValidationStatus::Failed, SSL_AD_BAD_CERTIFICATE,
+                             error};
+  }
 
-  // certificate get
   X509* leaf_cert = sk_X509_value(&cert_chain, 0);
   ASSERT(leaf_cert);
-  BIO* bio = BIO_new(BIO_s_mem()); // create a new BIO
-  // write the certificate to the BIO
-  if (PEM_write_bio_X509(bio, leaf_cert) != 1) {
-    // Handle error
-    std::cout << "PEM_write_bio_X509: error" << std::endl;
+
+  std::string certificate;
+  if (!x509ToDer(leaf_cert, certificate)) {
+    stats_.fail_verify_error_.inc();
+    auto error =
+        fmt::format("verify cert failed: failed to encode openssl X509 cert to DER binary");
+    ENVOY_LOG(debug, error);
+    return ValidationResults{ValidationResults::ValidationStatus::Failed,
+                             Envoy::Ssl::ClientValidationStatus::Failed, SSL_AD_BAD_CERTIFICATE,
+                             error};
   }
-  // now, you can read the data from the BIO
-  uint8_t* certificate = new uint8_t[BIO_number_written(bio)];
-  int length = BIO_read(bio, certificate, BIO_number_written(bio));
-  ASSERT(static_cast<size_t>(length) == BIO_number_written(bio)); // make sure all the data was read
-  [[maybe_unused]] size_t certificate_size = static_cast<size_t>(length);
-  std::cout << "cert_pem: " << certificate << std::endl;
-  std::cout << "cert_pem size: " << length << std::endl;
-  // don't forget to free the BIO and the certificate data when you're done with them
-  BIO_free_all(bio);
 
-  // start verify
-  rats_verifier_err_t rats_ret;
+  // verify cert with librats
+  rats_verifier_err_t rats_ret = librats_verify_attestation_certificate(
+      conf, reinterpret_cast<uint8_t*>(const_cast<char*>(certificate.c_str())), certificate.size(),
+      verifyClaimsCallback, &claims);
 
-  rats_ret = librats_verify_attestation_certificate(conf, certificate, certificate_size,
-                                                    verify_callback, &args);
-
-  // test
-  rats_ret = RATS_VERIFIER_ERR_NONE;
-
-  // result
-  Envoy::Ssl::ClientValidationStatus detailed_status =
-      Envoy::Ssl::ClientValidationStatus::NotValidated;
-  uint8_t tls_alert = SSL_AD_CERTIFICATE_UNKNOWN;
-  std::string error_details = "cert verify not start";
-  bool succeeded = 0;
   if (rats_ret != RATS_VERIFIER_ERR_NONE) {
-    printf("Failed to verify certificate %#x\n", rats_ret);
-    succeeded = 0;
-    detailed_status = Envoy::Ssl::ClientValidationStatus::Failed;
-    tls_alert = SSL_AD_CERTIFICATE_UNOBTAINABLE;
-    error_details = "librats-failed.";
-  } else {
-    std::cout << "verify certificate success" << std::endl;
-    succeeded = 1;
-    detailed_status = Envoy::Ssl::ClientValidationStatus::Validated;
+    stats_.fail_verify_error_.inc();
+    auto error = fmt::format("librats verify certificate failed: {:#X}", rats_ret);
+    ENVOY_LOG(debug, error);
+    return ValidationResults{ValidationResults::ValidationStatus::Failed,
+                             Envoy::Ssl::ClientValidationStatus::Failed, SSL_AD_CERTIFICATE_UNKNOWN,
+                             error};
   }
 
-  // unused parament declair
-  [[maybe_unused]] auto transport_socket_options_pp = transport_socket_options;
-  [[maybe_unused]] bool nouse2 = is_server;
-  [[maybe_unused]] X509_STORE* verify_store = SSL_CTX_get_cert_store(&ssl_ctx);
-
-  // return
-  return succeeded ? ValidationResults{ValidationResults::ValidationStatus::Successful,
-                                       detailed_status, absl::nullopt, absl::nullopt}
-                   : ValidationResults{ValidationResults::ValidationStatus::Failed, detailed_status,
-                                       tls_alert, error_details};
+  ENVOY_LOG(debug, "librats verify certificate success");
+  return ValidationResults{ValidationResults::ValidationStatus::Successful,
+                           Envoy::Ssl::ClientValidationStatus::Validated, absl::nullopt,
+                           absl::nullopt};
 }
 
 class LibratsCertValidatorFactory : public CertValidatorFactory {

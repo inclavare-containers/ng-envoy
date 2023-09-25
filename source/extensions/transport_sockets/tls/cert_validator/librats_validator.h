@@ -1,34 +1,5 @@
-#include "source/extensions/transport_sockets/tls/cert_validator/default_validator.h"
-
-#include <array>
-#include <cstdint>
-#include <deque>
-#include <functional>
-#include <string>
-#include <utility>
-#include <vector>
-
-#include "envoy/common/pure.h"
-#include "envoy/network/transport_socket.h"
-#include "envoy/registry/registry.h"
-#include "envoy/ssl/context.h"
-#include "envoy/ssl/context_config.h"
-#include "envoy/ssl/private_key/private_key.h"
-#include "envoy/ssl/ssl_socket_extended_info.h"
-
 #include "source/common/common/logger.h"
-#include "source/common/common/matchers.h"
-#include "source/common/stats/symbol_table.h"
-#include "source/extensions/transport_sockets/tls/cert_validator/cert_validator.h"
-#include "source/extensions/transport_sockets/tls/cert_validator/san_matcher.h"
-#include "source/extensions/transport_sockets/tls/stats.h"
-
-#include "absl/synchronization/mutex.h"
-#include "openssl/ssl.h"
-#include "openssl/x509v3.h"
-
-#include "librats/api.h"
-#include "librats/conf.h"
+#include "source/extensions/transport_sockets/tls/cert_validator/default_validator.h"
 
 namespace Envoy {
 namespace Extensions {
@@ -51,17 +22,15 @@ public:
   int initializeSslContexts(std::vector<SSL_CTX*> contexts, bool provides_certificates) override;
 
 private:
-  const Envoy::Ssl::CertificateValidationContextConfig* config_;
-  [[maybe_unused]] SslStats& stats_;
-  [[maybe_unused]] TimeSource& time_source_;
+  // Create this function since inheriting Logger::Loggable<Logger::Id::connection> directly leads
+  // to ambiguity.
+  static spdlog::logger& __log_do_not_use_read_comment() { // NOLINT(readability-identifier-naming)
+    static spdlog::logger& instance = Envoy::Logger::Registry::getLog(Logger::Id::connection);
+    return instance;
+  }
 
-  bool allow_untrusted_certificate_{false};
-  bssl::UniquePtr<X509> ca_cert_;
-  std::string ca_file_path_;
-  std::vector<SanMatcherPtr> subject_alt_name_matchers_;
-  std::vector<std::vector<uint8_t>> verify_certificate_hash_list_;
-  std::vector<std::vector<uint8_t>> verify_certificate_spki_list_;
-  [[maybe_unused]] bool verify_trusted_ca_{false};
+  const Envoy::Ssl::CertificateValidationContextConfig* config_;
+  SslStats& stats_;
 };
 
 DECLARE_FACTORY(LibratsCertValidatorFactory);

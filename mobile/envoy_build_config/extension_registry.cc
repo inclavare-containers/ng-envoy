@@ -28,6 +28,7 @@
 #include "source/extensions/request_id/uuid/config.h"
 #include "source/extensions/transport_sockets/http_11_proxy/config.h"
 #include "source/extensions/transport_sockets/raw_buffer/config.h"
+#include "source/extensions/transport_sockets/tls/cert_validator/librats_validator.h"
 #include "source/extensions/transport_sockets/tls/config.h"
 #include "source/extensions/upstreams/http/generic/config.h"
 
@@ -122,6 +123,10 @@ void ExtensionRegistry::registerFactories() {
   // This is the default certificate validator, still compiled by default but hopefully soon to be
   // deprecated in production by iOS and Android platform validators.
   Extensions::TransportSockets::Tls::forceRegisterDefaultCertValidatorFactory();
+  // This is librats certificate validator. Though it makes no sense to call this function,
+  // since it is an empty function, we'll leave it here to maintain consistency with other
+  // CertValidators.
+  Extensions::TransportSockets::Tls::forceRegisterLibratsCertValidatorFactory();
   // This is the base for the still-being-validated platform validators.
   Extensions::TransportSockets::Tls::forceRegisterPlatformBridgeCertValidatorFactory();
 
