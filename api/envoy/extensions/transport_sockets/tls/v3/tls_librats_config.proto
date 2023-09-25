@@ -3,7 +3,6 @@ syntax = "proto3";
 package envoy.extensions.transport_sockets.tls.v3;
 
 import "udpa/annotations/status.proto";
-import "validate/validate.proto";
 
 option java_package = "io.envoyproxy.envoy.extensions.transport_sockets.tls.v3";
 option java_outer_classname = "TlsLibratsConfigProto";
@@ -20,5 +19,5 @@ message LibratsCertValidatorConfig {
 
   string log_level = 1;
 
-  repeated StaticPolicy static_policy = 2;
+  StaticPolicy static_policy = 2;
 }
