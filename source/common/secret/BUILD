@@ -30,14 +30,14 @@ envoy_cc_library(
     name = "secret_provider_impl_lib",
     srcs = [
         "secret_provider_impl.cc",
-        "librats_secret_provider_impl.cc",
+        "rats_tls_secret_provider_impl.cc",
     ],
     hdrs = [
         "secret_provider_impl.h",
-        "librats_secret_provider_impl.h",
+        "rats_tls_secret_provider_impl.h",
     ],
     external_deps = [
-        "librats",
+        "rats-rs",
     ],
     deps = [
         "//envoy/secret:secret_provider_interface",

@@ -5,6 +5,7 @@ package envoy.extensions.transport_sockets.tls.v3;
 import "envoy/config/core/v3/address.proto";
 import "envoy/config/core/v3/extension.proto";
 import "envoy/extensions/transport_sockets/tls/v3/common.proto";
+import "envoy/extensions/transport_sockets/tls/v3/rats_tls.proto";
 import "envoy/extensions/transport_sockets/tls/v3/secret.proto";
 
 import "google/protobuf/duration.proto";
@@ -158,7 +159,7 @@ message TlsKeyLog {
 }
 
 // TLS context shared by both client and server TLS contexts.
-// [#next-free-field: 113]
+// [#next-free-field: 114]
 message CommonTlsContext {
   option (udpa.annotations.versioning).previous_message_type = "envoy.api.v2.auth.CommonTlsContext";
 
@@ -255,8 +256,8 @@ message CommonTlsContext {
   // this to avoid this problem.]
   repeated TlsCertificate tls_certificates = 2;
 
-  // customized librats definition
-  repeated LibratsCertificate tls_certificates_librats_configs = 112;
+  // The definition for rats-tls certificate provicer config
+  repeated RatsTlsCertGeneratorConfig rats_tls_cert_generator_configs = 113;
 
   // Configs for fetching TLS certificates via SDS API. Note SDS API allows certificates to be
   // fetched/refreshed over the network asynchronously with respect to the TLS handshake.

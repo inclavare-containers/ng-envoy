@@ -1,17 +1,34 @@
+#include "envoy/extensions/transport_sockets/tls/v3/rats_tls.pb.h"
+
 #include "source/common/common/logger.h"
 #include "source/extensions/transport_sockets/tls/cert_validator/default_validator.h"
+
+#include "rats-rs/rats-rs.h"
 
 namespace Envoy {
 namespace Extensions {
 namespace TransportSockets {
 namespace Tls {
 
-class LibratsCertValidator : public DefaultCertValidator {
+constexpr int kMaxNumsOfPolicyIds = 16;
+constexpr int kMaxNumsOfTrustedCertsPaths = 8;
+
+using RatsTlsCertValidatorConfig =
+    envoy::extensions::transport_sockets::tls::v3::RatsTlsCertValidatorConfig;
+
+struct VerifyPolicy {
 public:
-  LibratsCertValidator(const Envoy::Ssl::CertificateValidationContextConfig* config,
+  rats_rs_verify_policy_t rats_rs_verify_policy;
+  const char* tmp_policy_ids[kMaxNumsOfPolicyIds];
+  const char* tmp_trusted_certs_paths[kMaxNumsOfTrustedCertsPaths];
+};
+
+class RatsTlsCertValidator : public DefaultCertValidator {
+public:
+  RatsTlsCertValidator(const Envoy::Ssl::CertificateValidationContextConfig* config,
                        SslStats& stats, TimeSource& time_source);
 
-  ~LibratsCertValidator() override = default;
+  ~RatsTlsCertValidator() override = default;
 
   ValidationResults
   doVerifyCertChain(STACK_OF(X509)& cert_chain, Ssl::ValidateResultCallbackPtr callback,
@@ -29,11 +46,12 @@ private:
     return instance;
   }
 
-  const Envoy::Ssl::CertificateValidationContextConfig* config_;
+  std::unique_ptr<RatsTlsCertValidatorConfig> validator_config_;
+  std::unique_ptr<VerifyPolicy> verify_policy_;
   SslStats& stats_;
 };
 
-DECLARE_FACTORY(LibratsCertValidatorFactory);
+DECLARE_FACTORY(RatsTlsCertValidatorFactory);
 
 } // namespace Tls
 } // namespace TransportSockets

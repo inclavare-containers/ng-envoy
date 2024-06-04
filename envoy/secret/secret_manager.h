@@ -4,6 +4,7 @@
 
 #include "envoy/config/core/v3/config_source.pb.h"
 #include "envoy/extensions/transport_sockets/tls/v3/cert.pb.h"
+#include "envoy/extensions/transport_sockets/tls/v3/rats_tls.pb.h"
 #include "envoy/secret/secret_provider.h"
 
 namespace Envoy {
@@ -68,8 +69,9 @@ public:
    */
   virtual TlsCertificateConfigProviderSharedPtr createInlineTlsCertificateProvider(
       const envoy::extensions::transport_sockets::tls::v3::TlsCertificate& tls_certificate) PURE;
-  virtual TlsCertificateConfigProviderSharedPtr createLibratsTlsCertificateProvider(
-      const envoy::extensions::transport_sockets::tls::v3::LibratsCertificate& librats_secret_config) PURE;
+  virtual TlsCertificateConfigProviderSharedPtr createRatsTlsCertificateProvider(
+      const envoy::extensions::transport_sockets::tls::v3::RatsTlsCertGeneratorConfig&
+          rats_tls_cert_generator_config) PURE;
 
   /**
    * @param certificate_validation_context the protobuf config of the certificate validation

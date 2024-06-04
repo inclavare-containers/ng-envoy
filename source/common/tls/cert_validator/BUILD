@@ -12,7 +12,7 @@ envoy_cc_library(
     name = "cert_validator_lib",
     srcs = [
         "default_validator.cc",
-        "librats_validator.cc",
+        "rats_tls_validator.cc",
         "factory.cc",
         "san_matcher.cc",
         "utility.cc",
@@ -20,7 +20,7 @@ envoy_cc_library(
     hdrs = [
         "cert_validator.h",
         "default_validator.h",
-        "librats_validator.h",
+        "rats_tls_validator.h",
         "factory.h",
         "san_matcher.h",
         "utility.h",
@@ -29,7 +29,7 @@ envoy_cc_library(
         "ssl",
         "abseil_base",
         "abseil_hash",
-        "librats",
+        "rats-rs",
     ],
     visibility = ["//visibility:public"],
     deps = [

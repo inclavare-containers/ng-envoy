@@ -38,9 +38,9 @@ public:
       const envoy::extensions::transport_sockets::tls::v3::TlsCertificate& tls_certificate)
       override;
 
-  TlsCertificateConfigProviderSharedPtr createLibratsTlsCertificateProvider(
-      const envoy::extensions::transport_sockets::tls::v3::LibratsCertificate&
-          librats_secret_config) override;
+  TlsCertificateConfigProviderSharedPtr createRatsTlsCertificateProvider(
+      const envoy::extensions::transport_sockets::tls::v3::RatsTlsCertGeneratorConfig&
+          rats_tls_cert_generator_config) override;
 
   CertificateValidationContextConfigProviderSharedPtr
   createInlineCertificateValidationContextProvider(

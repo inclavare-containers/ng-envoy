@@ -5,6 +5,7 @@
 #include "envoy/common/callback.h"
 #include "envoy/common/pure.h"
 #include "envoy/extensions/transport_sockets/tls/v3/cert.pb.h"
+#include "envoy/extensions/transport_sockets/tls/v3/rats_tls.pb.h"
 #include "envoy/init/target.h"
 #include "envoy/ssl/certificate_validation_context_config.h"
 #include "envoy/ssl/tls_certificate_config.h"
@@ -53,8 +54,8 @@ public:
 
 using TlsCertificatePtr =
     std::unique_ptr<envoy::extensions::transport_sockets::tls::v3::TlsCertificate>;
-using LibratsCertificatePtr =
-    std::unique_ptr<envoy::extensions::transport_sockets::tls::v3::LibratsCertificate>;
+using RatsTlsCertGeneratorConfigPtr =
+    std::unique_ptr<envoy::extensions::transport_sockets::tls::v3::RatsTlsCertGeneratorConfig>;
 using CertificateValidationContextPtr =
     std::unique_ptr<envoy::extensions::transport_sockets::tls::v3::CertificateValidationContext>;
 using TlsSessionTicketKeysPtr =

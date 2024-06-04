@@ -58,14 +58,11 @@ std::vector<Secret::TlsCertificateConfigProviderSharedPtr> getTlsCertificateConf
     }
     return providers;
   }
-  if (!config.tls_certificates_librats_configs().empty()) {
-    for (const auto& librats_secret_config : config.tls_certificates_librats_configs()) {
-      if (librats_secret_config.log_level() != "" && librats_secret_config.attester() != "" &&
-          !librats_secret_config.provide_endorsements()) {
-        continue;
-      }
-      providers.push_back(
-          factory_context.secretManager().createLibratsTlsCertificateProvider(librats_secret_config));
+  if (!config.rats_tls_cert_generator_configs().empty()) {
+    // Load rats-tls cert generation config.
+    for (const auto& rats_tls_cert_generator_config : config.rats_tls_cert_generator_configs()) {
+      providers.push_back(factory_context.secretManager().createRatsTlsCertificateProvider(
+          rats_tls_cert_generator_config));
     }
     return providers;
   }
@@ -239,20 +236,6 @@ ContextConfigImpl::ContextConfigImpl(
   if (!tls_certificate_providers_.empty()) {
     for (auto& provider : tls_certificate_providers_) {
       if (provider->secret() != nullptr) {
-        /*
-        //TEST BEGIN
-        const auto& cert_chain_ = provider->secret()->certificate_chain();
-        std::cout <<"cert_chain_ has_inline_bytes: " << cert_chain_.has_inline_bytes() << std::endl;
-        const auto& const_certificate = cert_chain_.inline_bytes().data();
-        const auto& certificate_size_out = cert_chain_.inline_bytes().length();
-        std::cout <<"cert_chain_ length: " << cert_chain_.inline_bytes().length() << std::endl;
-        std::cout << std::endl <<"RE certificate: " <<std::endl;
-        for(ssize_t  i = 0; i < static_cast<ssize_t>(certificate_size_out); i++) {
-            std::cout << const_certificate[i];
-        }  
-        std::cout <<"RE certificate_size: " << certificate_size_out  << std::endl << std::endl;
-        //TEST END
-        */
         tls_certificate_configs_.emplace_back(THROW_OR_RETURN_VALUE(
             Ssl::TlsCertificateConfigImpl::create(*provider->secret(), factory_context, api_),
             std::unique_ptr<Ssl::TlsCertificateConfigImpl>));
@@ -457,14 +440,14 @@ ServerContextConfigImpl::ServerContextConfigImpl(
 
   if (!capabilities().provides_certificates) {
     if ((config.common_tls_context().tls_certificates().size() +
-         config.common_tls_context().tls_certificate_sds_secret_configs().size() +
-         config.common_tls_context().tls_certificates_librats_configs().size()) == 0) {
+         config.common_tls_context().rats_tls_cert_generator_configs().size() +
+         config.common_tls_context().rats_tls_cert_generator_configs().size()) == 0) {
       throwEnvoyExceptionOrPanic("No TLS certificates found for server context");
     } else if (!config.common_tls_context().tls_certificates().empty() &&
                !config.common_tls_context().tls_certificate_sds_secret_configs().empty() &&
-               !config.common_tls_context().tls_certificates_librats_configs().empty()) {
-      throwEnvoyExceptionOrPanic(
-          "SDS and non-SDS TLS certificates may not be mixed in server contexts");
+               !config.common_tls_context().rats_tls_cert_generator_configs().empty()) {
+      throwEnvoyExceptionOrPanic("SDS and non-SDS (both regular TLS and rats-tls) TLS certificates "
+                                 "may not be mixed in server contexts");
     }
   }
 

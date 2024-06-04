@@ -11,7 +11,7 @@
 #include "source/common/protobuf/utility.h"
 #include "source/common/secret/sds_api.h"
 #include "source/common/secret/secret_provider_impl.h"
-#include "source/common/secret/librats_secret_provider_impl.h"
+#include "source/common/secret/rats_tls_secret_provider_impl.h"
 #include "source/common/ssl/certificate_validation_context_config_impl.h"
 #include "source/common/ssl/tls_certificate_config_impl.h"
 
@@ -108,9 +108,10 @@ TlsCertificateConfigProviderSharedPtr SecretManagerImpl::createInlineTlsCertific
   return std::make_shared<TlsCertificateConfigProviderImpl>(tls_certificate);
 }
 
-TlsCertificateConfigProviderSharedPtr SecretManagerImpl::createLibratsTlsCertificateProvider(
-    const envoy::extensions::transport_sockets::tls::v3::LibratsCertificate& librats_secret_config) {
-  return std::make_shared<LibratsTlsCertificateConfigProviderImpl>(librats_secret_config);
+TlsCertificateConfigProviderSharedPtr SecretManagerImpl::createRatsTlsCertificateProvider(
+    const envoy::extensions::transport_sockets::tls::v3::RatsTlsCertGeneratorConfig&
+        rats_tls_cert_generator_config) {
+  return std::make_shared<RatsTlsCertificateConfigProviderImpl>(rats_tls_cert_generator_config);
 }
 
 CertificateValidationContextConfigProviderSharedPtr

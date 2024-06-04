@@ -368,7 +368,7 @@ def envoy_dependencies(skip_targets = []):
     external_http_archive("bazel_compdb")
     external_http_archive("envoy_build_tools")
     _com_github_maxmind_libmaxminddb()
-    _com_github_inclavare_containers_librats()
+    _com_github_inclavare_containers_rats_rs()
 
     external_http_archive("rules_pkg")
     external_http_archive("com_github_aignas_rules_shellcheck")
@@ -404,23 +404,23 @@ def envoy_dependencies(skip_targets = []):
         actual = "@bazel_tools//tools/cpp/runfiles",
     )
 
-def _com_github_inclavare_containers_librats():
+def _com_github_inclavare_containers_rats_rs():
     native.new_local_repository(
         name = "system_libs",
         path = "/usr/local",
         build_file_content = """
 cc_library(
-    name = "librats",
-    srcs = glob(["lib/librats/librats_lib.so*"]),
-    hdrs = glob(["include/librats/**"]),
-    linkopts = ["-Wl,-rpath=/usr/local/lib/librats"],
+    name = "rats-rs",
+    srcs = glob(["lib/rats-rs/librats_rs.so*"]),
+    hdrs = glob(["include/rats-rs/**"]),
+    linkopts = ["-Wl,-rpath=/usr/local/lib/rats-rs"],
     visibility = ["//visibility:public"],
 )
         """,
     )
     native.bind(
-        name = "librats",
-        actual = "@system_libs//:librats",
+        name = "rats-rs",
+        actual = "@system_libs//:rats-rs",
     )
 
 def _boringssl():

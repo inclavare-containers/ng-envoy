@@ -1,6 +1,7 @@
 #include <functional>
 
 #include "envoy/extensions/transport_sockets/tls/v3/cert.pb.h"
+#include "envoy/extensions/transport_sockets/tls/v3/rats_tls.pb.h"
 #include "envoy/secret/secret_provider.h"
 #include "envoy/ssl/certificate_validation_context_config.h"
 #include "envoy/ssl/tls_certificate_config.h"
@@ -11,12 +12,12 @@
 namespace Envoy {
 namespace Secret {
 
-class LibratsTlsCertificateConfigProviderImpl : public TlsCertificateConfigProvider,
-                                                Logger::Loggable<Logger::Id::config> {
+class RatsTlsCertificateConfigProviderImpl : public TlsCertificateConfigProvider,
+                                             Logger::Loggable<Logger::Id::config> {
 public:
-  LibratsTlsCertificateConfigProviderImpl(
-      const envoy::extensions::transport_sockets::tls::v3::LibratsCertificate&
-          tls_certificates_librats_config);
+  RatsTlsCertificateConfigProviderImpl(
+      const envoy::extensions::transport_sockets::tls::v3::RatsTlsCertGeneratorConfig&
+          rats_tls_cert_generator_config);
 
   const envoy::extensions::transport_sockets::tls::v3::TlsCertificate* secret() const override;
 
@@ -31,9 +32,7 @@ public:
   }
 
 private:
-  bool certDerToPem(const std::string& der_cert, std::string& pem_cert) const;
-
-  Secret::LibratsCertificatePtr tls_certificates_librats_config_;
+  Secret::RatsTlsCertGeneratorConfigPtr rats_tls_cert_generator_config_;
   Secret::TlsCertificatePtr tls_certificate_;
 };
 
