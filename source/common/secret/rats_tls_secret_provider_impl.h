@@ -13,7 +13,7 @@ namespace Envoy {
 namespace Secret {
 
 class RatsTlsCertificateConfigProviderImpl : public TlsCertificateConfigProvider,
-                                             Logger::Loggable<Logger::Id::config> {
+                                             Logger::Loggable<Logger::Id::rats_tls> {
 public:
   RatsTlsCertificateConfigProviderImpl(
       const envoy::extensions::transport_sockets::tls::v3::RatsTlsCertGeneratorConfig&

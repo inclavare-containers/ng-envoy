@@ -42,7 +42,7 @@ private:
   // Create this function since inheriting Logger::Loggable<Logger::Id::connection> directly leads
   // to ambiguity.
   static spdlog::logger& __log_do_not_use_read_comment() { // NOLINT(readability-identifier-naming)
-    static spdlog::logger& instance = Envoy::Logger::Registry::getLog(Logger::Id::connection);
+    static spdlog::logger& instance = Envoy::Logger::Registry::getLog(Logger::Id::rats_tls);
     return instance;
   }
 

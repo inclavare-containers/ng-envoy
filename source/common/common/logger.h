@@ -96,6 +96,7 @@ const static bool should_log = true;
   FUNCTION(udp)                                                                                    \
   FUNCTION(wasm)                                                                                   \
   FUNCTION(websocket)                                                                              \
+  FUNCTION(rats_tls)                                                                               \
   FUNCTION(golang)
 
 // clang-format off
