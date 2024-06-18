@@ -1,7 +1,7 @@
 #include "envoy/extensions/transport_sockets/tls/v3/rats_tls.pb.h"
 
 #include "source/common/common/logger.h"
-#include "source/extensions/transport_sockets/tls/cert_validator/default_validator.h"
+#include "source/common/tls/cert_validator/default_validator.h"
 
 #include "rats-rs/rats-rs.h"
 
@@ -26,7 +26,7 @@ public:
 class RatsTlsCertValidator : public DefaultCertValidator {
 public:
   RatsTlsCertValidator(const Envoy::Ssl::CertificateValidationContextConfig* config,
-                       SslStats& stats, TimeSource& time_source);
+                       SslStats& stats, Server::Configuration::CommonFactoryContext& context);
 
   ~RatsTlsCertValidator() override = default;
 

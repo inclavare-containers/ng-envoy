@@ -1,4 +1,4 @@
-#include "source/extensions/transport_sockets/tls/cert_validator/rats_tls_validator.h"
+#include "source/common/tls/cert_validator/rats_tls_validator.h"
 
 #include <array>
 #include <functional>
@@ -19,11 +19,11 @@
 #include "source/common/common/hex.h"
 #include "source/common/config/utility.h"
 #include "source/common/protobuf/message_validator_impl.h"
-#include "source/extensions/transport_sockets/tls/cert_validator/cert_validator.h"
-#include "source/extensions/transport_sockets/tls/cert_validator/factory.h"
-#include "source/extensions/transport_sockets/tls/cert_validator/utility.h"
-#include "source/extensions/transport_sockets/tls/stats.h"
-#include "source/extensions/transport_sockets/tls/utility.h"
+#include "source/common/tls/cert_validator/cert_validator.h"
+#include "source/common/tls/cert_validator/factory.h"
+#include "source/common/tls/cert_validator/utility.h"
+#include "source/common/tls/stats.h"
+#include "source/common/tls/utility.h"
 
 #include "openssl/pem.h"
 #include "rats-rs/rats-rs.h"
@@ -134,8 +134,8 @@ bool x509ToPem(X509* cert, std::string& pem_cert) {
 
 RatsTlsCertValidator::RatsTlsCertValidator(
     const Envoy::Ssl::CertificateValidationContextConfig* config, SslStats& stats,
-    TimeSource& time_source)
-    : DefaultCertValidator(config, stats, time_source), stats_(stats) {
+    Server::Configuration::CommonFactoryContext& context)
+    : DefaultCertValidator(config, stats, context), stats_(stats) {
 
   this->validator_config_ = std::make_unique<RatsTlsCertValidatorConfig>();
   if (!config->customValidatorConfig().has_value()) {
@@ -224,9 +224,10 @@ ValidationResults RatsTlsCertValidator::doVerifyCertChain(
 
 class RatsTlsCertValidatorFactory : public CertValidatorFactory {
 public:
-  CertValidatorPtr createCertValidator(const Envoy::Ssl::CertificateValidationContextConfig* config,
-                                       SslStats& stats, TimeSource& time_source) override {
-    return std::make_unique<RatsTlsCertValidator>(config, stats, time_source);
+  CertValidatorPtr
+  createCertValidator(const Envoy::Ssl::CertificateValidationContextConfig* config, SslStats& stats,
+                      Server::Configuration::CommonFactoryContext& context) override {
+    return std::make_unique<RatsTlsCertValidator>(config, stats, context);
   }
 
   std::string name() const override { return "envoy.tls.cert_validator.rats_tls"; }
