@@ -1,4 +1,4 @@
-FROM envoyproxy/envoy-build-ubuntu:75238004b0fcfd8a7f71d380d7a774dda5c39622 as builder
+FROM envoyproxy/envoy-build-ubuntu:26c6bcc3af3d6ad166c42b550de672d40209bc1c as builder
 
 ENV DEBIAN_FRONTEND noninteractive
 
