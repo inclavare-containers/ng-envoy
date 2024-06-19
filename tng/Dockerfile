@@ -47,5 +47,4 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* && \
     rm -rf intel-sgx-deb.key
 
-VOLUME [ "/etc/sgx_default_qcnl.conf", "/etc/envoy.yaml" ]
 CMD ["envoy-static", "-c", "/etc/envoy.yaml", "-l", "off", "--component-log-level", "upstream:error,connection:debug,rats-rs:debug"]
