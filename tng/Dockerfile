@@ -21,7 +21,7 @@ RUN chmod 0777 bazel-bin/source/exe/envoy-static && \
     strip bazel-bin/source/exe/envoy-static
 
 
-FROM ubuntu:20.04 as envoy
+FROM ubuntu:22.04 as envoy
 
 ENV SGX_DCAP_VERSION 1.20
 
@@ -34,7 +34,7 @@ COPY --from=rats-rs:builder-c-api /usr/local/lib/rats-rs/ /usr/local/lib/rats-rs
 RUN apt-get update && \
     apt-get install curl gnupg -y && \
     curl -L https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | tee intel-sgx-deb.key | apt-key add - && \
-    echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu focal main' | tee /etc/apt/sources.list.d/intel-sgx.list && \
+    echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' | tee /etc/apt/sources.list.d/intel-sgx.list && \
     apt-get update && \
     apt-get install -y \
         libsgx-dcap-default-qpl-dev="$SGX_DCAP_VERSION*" \
