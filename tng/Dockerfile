@@ -21,9 +21,7 @@ RUN chmod 0777 bazel-bin/source/exe/envoy-static && \
     strip bazel-bin/source/exe/envoy-static
 
 
-FROM ubuntu:22.04 as envoy
-
-ENV SGX_DCAP_VERSION 1.20
+FROM ubuntu:20.04 as envoy
 
 # copy envoy-static
 COPY --from=builder /home/newuser/envoy/bazel-bin/source/exe/envoy-static /usr/local/bin/envoy-static
