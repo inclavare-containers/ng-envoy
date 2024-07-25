@@ -31,20 +31,4 @@ COPY --from=builder /home/newuser/envoy/bazel-bin/source/exe/envoy-static /usr/l
 # copy dependencies
 COPY --from=rats-rs:builder-c-api /usr/local/lib/rats-rs/ /usr/local/lib/rats-rs/
 
-RUN apt-get update && \
-    apt-get install curl gnupg -y && \
-    curl -L https://download.01.org/intel-sgx/sgx_repo/ubuntu/intel-sgx-deb.key | tee intel-sgx-deb.key | apt-key add - && \
-    echo 'deb [arch=amd64] https://download.01.org/intel-sgx/sgx_repo/ubuntu jammy main' | tee /etc/apt/sources.list.d/intel-sgx.list && \
-    apt-get update && \
-    apt-get install -y \
-        libsgx-dcap-default-qpl-dev="$SGX_DCAP_VERSION*" \
-        libsgx-dcap-default-qpl="$SGX_DCAP_VERSION*" \
-        libsgx-dcap-quote-verify-dev="$SGX_DCAP_VERSION*" \
-        libsgx-dcap-quote-verify="$SGX_DCAP_VERSION*" \
-        libtdx-attest-dev="$SGX_DCAP_VERSION*" \
-        libtdx-attest="$SGX_DCAP_VERSION*" \
-        && \
-    rm -rf /var/lib/apt/lists/* && \
-    rm -rf intel-sgx-deb.key
-
 CMD ["envoy-static", "-c", "/etc/envoy.yaml", "-l", "off", "--component-log-level", "upstream:error,connection:debug,rats-rs:debug"]
