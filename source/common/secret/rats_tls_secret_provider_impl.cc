@@ -59,6 +59,7 @@ genCertWithConfig(const envoy::extensions::transport_sockets::tls::v3::RatsTlsCe
 
       attest_mode.tag = RATS_RS_COCO_ATTEST_MODE_TOKEN;
       attest_mode.TOKEN.as_addr = token_mode.as_addr().c_str();
+      attest_mode.TOKEN.as_is_grpc = token_mode.as_is_grpc();
       attest_mode.TOKEN.policy_ids = tmp_policy_ids;
       attest_mode.TOKEN.policy_ids_len = token_mode.policy_ids_size();
     } else {

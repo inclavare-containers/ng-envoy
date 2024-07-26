@@ -47,8 +47,9 @@ convertConfigToVerifyPolicy(const RatsTlsCertValidatorConfig& validator_config) 
     rats_rs_coco_verify_mode_t verify_mode;
     if (coco_verifier.has_evidence_mode()) {
       auto& evidence_mode = coco_verifier.evidence_mode();
-      verify_mode = rats_rs_coco_verify_mode_t{RATS_RS_COCO_VERIFY_MODE_EVIDENCE,
-                                               {evidence_mode.as_addr().c_str()}};
+      verify_mode =
+          rats_rs_coco_verify_mode_t{RATS_RS_COCO_VERIFY_MODE_EVIDENCE,
+                                     {evidence_mode.as_addr().c_str(), evidence_mode.as_is_grpc()}};
     } else if (coco_verifier.has_token_mode()) {
       verify_mode = rats_rs_coco_verify_mode_t{RATS_RS_COCO_VERIFY_MODE_TOKEN, {}};
     } else {
