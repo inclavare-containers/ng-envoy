@@ -23,6 +23,8 @@ RUN chmod 0777 bazel-bin/source/exe/envoy-static && \
 
 FROM ubuntu:20.04 as envoy
 
+RUN apt-get update && apt-get install -y libssl1.1
+
 # copy envoy-static
 COPY --from=builder /home/newuser/envoy/bazel-bin/source/exe/envoy-static /usr/local/bin/envoy-static
 
