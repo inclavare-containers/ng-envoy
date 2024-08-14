@@ -1,9 +1,12 @@
 #include "source/extensions/filters/common/set_filter_state/filter_config.h"
 
+#include "envoy/router/string_accessor.h"
 #include "envoy/registry/registry.h"
+#include "envoy/common/hashable.h"
 
 #include "source/common/formatter/substitution_format_string.h"
 #include "source/common/router/string_accessor_impl.h"
+#include "source/common/network/utility.h"
 
 namespace Envoy {
 namespace Extensions {
@@ -21,6 +24,41 @@ public:
 };
 
 REGISTER_FACTORY(GenericStringObjectFactory, StreamInfo::FilterState::ObjectFactory);
+
+class HashableStringAccessorImpl : public Router::StringAccessor, public Hashable {
+public:
+  HashableStringAccessorImpl(absl::string_view value) : value_(value) {}
+
+  // StringAccessor
+  absl::string_view asString() const override { return value_; }
+
+  // FilterState::Object
+  ProtobufTypes::MessagePtr serializeAsProto() const override {
+    auto message = std::make_unique<ProtobufWkt::StringValue>();
+    message->set_value(value_);
+    return message;
+  }
+
+  absl::optional<std::string> serializeAsString() const override { return value_; }
+
+  absl::optional<uint64_t> hash() const override {
+    return HashUtil::xxHash64(this->value_);
+  };
+
+private:
+  std::string value_;
+};
+
+class GenericHashableStringObjectFactory : public StreamInfo::FilterState::ObjectFactory {
+public:
+  std::string name() const override { return "envoy.hashable_string"; }
+  std::unique_ptr<StreamInfo::FilterState::Object>
+  createFromBytes(absl::string_view data) const override {
+    return std::make_unique<HashableStringAccessorImpl>(data);
+  }
+};
+
+REGISTER_FACTORY(GenericHashableStringObjectFactory, StreamInfo::FilterState::ObjectFactory);
 
 std::vector<Value>
 Config::parse(const Protobuf::RepeatedPtrField<FilterStateValueProto>& proto_values,
