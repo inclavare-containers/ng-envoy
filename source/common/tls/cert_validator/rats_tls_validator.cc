@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <thread>
+#include <chrono>
 
 #include "envoy/network/transport_socket.h"
 #include "envoy/ssl/context.h"
@@ -190,9 +192,36 @@ ValidationResults RatsTlsCertValidator::doVerifyCertChain(
 
   // Verify cert with rats-rs
   rats_rs_verify_policy_output_t verify_policy_output = RATS_RS_VERIFY_POLICY_OUTPUT_FAILED;
-  rats_rs_error_obj_t* rats_rs_error_obj =
-      rats_rs_verify_cert(reinterpret_cast<const uint8_t*>(certificate.c_str()), certificate.size(),
-                          this->verify_policy_->rats_rs_verify_policy, &verify_policy_output);
+  rats_rs_error_obj_t* rats_rs_error_obj = nullptr;
+
+  int current_try = 1;
+  while (true) {
+    if (current_try != 1) {
+      ENVOY_LOG(info, "verify rats-tls cert with rats-rs ({} attempts)", current_try);
+    }
+
+    rats_rs_error_obj = rats_rs_verify_cert(
+        reinterpret_cast<const uint8_t*>(certificate.c_str()), certificate.size(),
+        this->verify_policy_->rats_rs_verify_policy, &verify_policy_output);
+
+    if (rats_rs_error_obj == nullptr) { // We have a good luck
+      break;
+    } else {
+      rats_rs_error_msg_t rats_rs_error_msg = rats_rs_err_get_msg_ref(rats_rs_error_obj);
+      ENVOY_LOG(warn,
+                "Failed to verify rats-tls cert with rats-rs ({} attempts): "
+                "Error kind: {:#x}, msg: {:.{}s}",
+                current_try, rats_rs_err_get_kind(rats_rs_error_obj), rats_rs_error_msg.msg,
+                rats_rs_error_msg.msg_len);
+      rats_rs_err_free(rats_rs_error_obj);
+      if (current_try == 5) {
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    }
+    current_try++;
+  }
+
   if (rats_rs_error_obj == nullptr) {
     if (verify_policy_output == RATS_RS_VERIFY_POLICY_OUTPUT_PASSED) {
       ENVOY_LOG(debug, "The evaluation result of rats-tls cert is PASSED");

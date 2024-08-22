@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <thread>
+#include <chrono>
 
 #include "envoy/extensions/transport_sockets/tls/v3/cert.pb.h"
 
@@ -34,12 +36,11 @@ RatsTlsCertificateConfigProviderImpl::RatsTlsCertificateConfigProviderImpl(
           std::make_unique<envoy::extensions::transport_sockets::tls::v3::TlsCertificate>()) {}
 
 std::pair<std::string, std::string>
-genCertWithConfig(const envoy::extensions::transport_sockets::tls::v3::RatsTlsCertGeneratorConfig&
-                      rats_tls_cert_generator_config) {
+RatsTlsCertificateConfigProviderImpl::genCertWithConfig() const {
   // TODO: align rats-rs log level with envoy
   // TODO: check reference assign or value assign
-  if (rats_tls_cert_generator_config.has_coco_attester()) {
-    auto& coco_attester = rats_tls_cert_generator_config.coco_attester();
+  if (this->rats_tls_cert_generator_config_->has_coco_attester()) {
+    auto& coco_attester = this->rats_tls_cert_generator_config_->coco_attester();
     const char* tmp_policy_ids[kMaxNumsOfPolicyIds] = {nullptr};
 
     rats_rs_coco_attest_mode_t attest_mode;
@@ -77,17 +78,41 @@ genCertWithConfig(const envoy::extensions::transport_sockets::tls::v3::RatsTlsCe
     size_t privkey_len_out = 0;
     uint8_t* certificate_out = nullptr;
     size_t certificate_len_out = 0;
-    rats_rs_error_obj =
-        rats_rs_create_cert("CN=TNG,O=Inclavare Containers", RATS_RS_HASH_ALGO_SHA256,
-                            RATS_RS_ASYMMETRIC_ALGO_P256, attester_type, nullptr, 0, &privkey_out,
-                            &privkey_len_out, &certificate_out, &certificate_len_out);
+
+    int current_try = 1;
+    while (true) {
+      if (current_try != 1) {
+        ENVOY_LOG(info, "Trying to generate rats-tls certificate with rats-rs ({} attempts)",
+                  current_try);
+      }
+      rats_rs_error_obj =
+          rats_rs_create_cert("CN=TNG,O=Inclavare Containers", RATS_RS_HASH_ALGO_SHA256,
+                              RATS_RS_ASYMMETRIC_ALGO_P256, attester_type, nullptr, 0, &privkey_out,
+                              &privkey_len_out, &certificate_out, &certificate_len_out);
+      if (rats_rs_error_obj == nullptr) { // We have a good luck
+        break;
+      } else {
+        rats_rs_error_msg_t rats_rs_error_msg = rats_rs_err_get_msg_ref(rats_rs_error_obj);
+        ENVOY_LOG(warn,
+                  "Failed to generate rats-tls certificate with rats-rs ({} attempts): "
+                  "Error kind: {:#x}, msg: {:.{}s}",
+                  current_try, rats_rs_err_get_kind(rats_rs_error_obj), rats_rs_error_msg.msg,
+                  rats_rs_error_msg.msg_len);
+        rats_rs_err_free(rats_rs_error_obj);
+        if (current_try == 5) {
+          break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+      }
+      current_try++;
+    }
 
     if (rats_rs_error_obj != nullptr) {
       rats_rs_error_msg_t rats_rs_error_msg = rats_rs_err_get_msg_ref(rats_rs_error_obj);
-      auto exception_msg =
-          fmt::format("Failed to generate rats-tls certificate: Error kind: {:#x}, msg: {:.{}s}",
-                      rats_rs_err_get_kind(rats_rs_error_obj), rats_rs_error_msg.msg,
-                      rats_rs_error_msg.msg_len);
+      auto exception_msg = fmt::format(
+          "Failed to generate rats-tls certificate with rats-rs: Error kind: {:#x}, msg: {:.{}s}",
+          rats_rs_err_get_kind(rats_rs_error_obj), rats_rs_error_msg.msg,
+          rats_rs_error_msg.msg_len);
       rats_rs_err_free(rats_rs_error_obj);
       throw EnvoyException(exception_msg);
     }
@@ -107,7 +132,7 @@ const envoy::extensions::transport_sockets::tls::v3::TlsCertificate*
 RatsTlsCertificateConfigProviderImpl::secret() const {
   ENVOY_LOG(info, "Generating rats-tls X509 cert");
 
-  auto [private_key, certificate] = genCertWithConfig(*this->rats_tls_cert_generator_config_);
+  auto [private_key, certificate] = this->genCertWithConfig();
 
   ENVOY_LOG(debug, "The rats-tls X509 cert is generated successfully: {}", certificate);
 

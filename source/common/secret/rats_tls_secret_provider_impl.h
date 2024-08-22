@@ -32,6 +32,7 @@ public:
   }
 
 private:
+  std::pair<std::string, std::string> genCertWithConfig() const;
   Secret::RatsTlsCertGeneratorConfigPtr rats_tls_cert_generator_config_;
   Secret::TlsCertificatePtr tls_certificate_;
 };
