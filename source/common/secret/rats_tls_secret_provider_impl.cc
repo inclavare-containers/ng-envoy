@@ -25,7 +25,6 @@
 constexpr int kMaxNumsOfPolicyIds = 16;
 constexpr int kCertUpdateIntervalSecond = 60 * 60; // 1 hour
 constexpr int kRatsRsCreateCertTimeoutSecond = 30;
-constexpr int kRatsRsCreateCertRetryWaitSecond = 2;
 
 namespace Envoy {
 namespace Secret {
@@ -128,34 +127,10 @@ RatsTlsCertificateUpdater::generateCertOnceBlocking() const {
     uint8_t* certificate_out = nullptr;
     size_t certificate_len_out = 0;
 
-    int current_try = 1;
-    while (true) {
-      if (current_try != 1) {
-        ENVOY_LOG(info, "Trying to generate rats-tls certificate with rats-rs ({} attempts)",
-                  current_try);
-      }
-      rats_rs_error_obj =
-          rats_rs_create_cert("CN=TNG,O=Inclavare Containers", RATS_RS_HASH_ALGO_SHA256,
-                              RATS_RS_ASYMMETRIC_ALGO_P256, attester_type, nullptr, 0, &privkey_out,
-                              &privkey_len_out, &certificate_out, &certificate_len_out);
-      if (rats_rs_error_obj == nullptr) { // We have a good luck
-        break;
-      } else {
-        rats_rs_error_msg_t rats_rs_error_msg = rats_rs_err_get_msg_ref(rats_rs_error_obj);
-        ENVOY_LOG(warn,
-                  "Failed to generate rats-tls certificate with rats-rs ({} attempts): "
-                  "Error kind: {:#x}, msg: {:.{}s}",
-                  current_try, rats_rs_err_get_kind(rats_rs_error_obj), rats_rs_error_msg.msg,
-                  rats_rs_error_msg.msg_len);
-        if (current_try == 5) {
-          break;
-        }
-        rats_rs_err_free(rats_rs_error_obj);
-        rats_rs_error_obj = nullptr;
-        std::this_thread::sleep_for(std::chrono::seconds(kRatsRsCreateCertRetryWaitSecond));
-      }
-      current_try++;
-    }
+    rats_rs_error_obj =
+        rats_rs_create_cert("CN=TNG,O=Inclavare Containers", RATS_RS_HASH_ALGO_SHA256,
+                            RATS_RS_ASYMMETRIC_ALGO_P256, attester_type, nullptr, 0, &privkey_out,
+                            &privkey_len_out, &certificate_out, &certificate_len_out);
 
     if (rats_rs_error_obj != nullptr) {
       rats_rs_error_msg_t rats_rs_error_msg = rats_rs_err_get_msg_ref(rats_rs_error_obj);

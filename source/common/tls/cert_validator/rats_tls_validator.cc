@@ -31,8 +31,6 @@
 #include "openssl/pem.h"
 #include "rats-rs/rats-rs.h"
 
-constexpr int kRatsRsVerifyCertRetryWaitSecond = 2;
-
 namespace Envoy {
 namespace Extensions {
 namespace TransportSockets {
@@ -164,34 +162,9 @@ RatsTlsCertValidatorInner::verifyRatsTlsCertPem(std::string& certificate) noexce
   rats_rs_verify_policy_output_t verify_policy_output = RATS_RS_VERIFY_POLICY_OUTPUT_FAILED;
   rats_rs_error_obj_t* rats_rs_error_obj = nullptr;
 
-  int current_try = 1;
-  while (true) {
-    if (current_try != 1) {
-      ENVOY_LOG(info, "verify rats-tls cert with rats-rs ({} attempts)", current_try);
-    }
-
-    rats_rs_error_obj = rats_rs_verify_cert(
-        reinterpret_cast<const uint8_t*>(certificate.c_str()), certificate.size(),
-        this->verify_policy_->rats_rs_verify_policy, &verify_policy_output);
-
-    if (rats_rs_error_obj == nullptr) { // We have a good luck
-      break;
-    } else {
-      rats_rs_error_msg_t rats_rs_error_msg = rats_rs_err_get_msg_ref(rats_rs_error_obj);
-      ENVOY_LOG(warn,
-                "Failed to verify rats-tls cert with rats-rs ({} attempts): "
-                "Error kind: {:#x}, msg: {:.{}s}",
-                current_try, rats_rs_err_get_kind(rats_rs_error_obj), rats_rs_error_msg.msg,
-                rats_rs_error_msg.msg_len);
-      if (current_try == 5) {
-        break;
-      }
-      rats_rs_err_free(rats_rs_error_obj);
-      rats_rs_error_obj = nullptr;
-      std::this_thread::sleep_for(std::chrono::seconds(kRatsRsVerifyCertRetryWaitSecond));
-    }
-    current_try++;
-  }
+  rats_rs_error_obj =
+      rats_rs_verify_cert(reinterpret_cast<const uint8_t*>(certificate.c_str()), certificate.size(),
+                          this->verify_policy_->rats_rs_verify_policy, &verify_policy_output);
 
   if (rats_rs_error_obj == nullptr) {
     if (verify_policy_output == RATS_RS_VERIFY_POLICY_OUTPUT_PASSED) {
