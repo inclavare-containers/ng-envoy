@@ -4,6 +4,7 @@
 #include "source/common/tls/cert_validator/default_validator.h"
 
 #include "rats-rs/rats-rs.h"
+#include <memory>
 
 namespace Envoy {
 namespace Extensions {
@@ -23,12 +24,13 @@ public:
   const char* tmp_trusted_certs_paths[kMaxNumsOfTrustedCertsPaths];
 };
 
-class RatsTlsCertValidator : public DefaultCertValidator {
+class RatsTlsCertValidatorInner : public DefaultCertValidator,
+                                  public std::enable_shared_from_this<RatsTlsCertValidatorInner> {
 public:
-  RatsTlsCertValidator(const Envoy::Ssl::CertificateValidationContextConfig* config,
-                       SslStats& stats, Server::Configuration::CommonFactoryContext& context);
+  RatsTlsCertValidatorInner(const Envoy::Ssl::CertificateValidationContextConfig* config,
+                            SslStats& stats, Server::Configuration::CommonFactoryContext& context);
 
-  ~RatsTlsCertValidator() override = default;
+  ~RatsTlsCertValidatorInner() override = default;
 
   ValidationResults
   doVerifyCertChain(STACK_OF(X509)& cert_chain, Ssl::ValidateResultCallbackPtr callback,
@@ -46,9 +48,42 @@ private:
     return instance;
   }
 
+  static void logSslErrorChain();
+
+  static bool x509ToPem(X509* cert, std::string& pem_cert);
+
+  ValidationResults verifyRatsTlsCertPem(std::string& certificate) noexcept;
+
   std::unique_ptr<RatsTlsCertValidatorConfig> validator_config_;
   std::unique_ptr<VerifyPolicy> verify_policy_;
   SslStats& stats_;
+  Event::Dispatcher& rats_tls_worker_dispatcher_;
+};
+
+class RatsTlsCertValidator : public DefaultCertValidator {
+public:
+  RatsTlsCertValidator(const Envoy::Ssl::CertificateValidationContextConfig* config,
+                       SslStats& stats, Server::Configuration::CommonFactoryContext& context)
+      : DefaultCertValidator(config, stats, context),
+        inner_(std::make_shared<RatsTlsCertValidatorInner>(config, stats, context)){};
+
+  ~RatsTlsCertValidator() override = default;
+
+  ValidationResults
+  doVerifyCertChain(STACK_OF(X509)& cert_chain, Ssl::ValidateResultCallbackPtr callback,
+                    const Network::TransportSocketOptionsConstSharedPtr& transport_socket_options,
+                    SSL_CTX& ssl, const CertValidator::ExtraValidationContext& validation_context,
+                    bool is_server, absl::string_view host_name) override {
+    return inner_->doVerifyCertChain(cert_chain, std::move(callback), transport_socket_options, ssl,
+                                     validation_context, is_server, host_name);
+  };
+
+  int initializeSslContexts(std::vector<SSL_CTX*> contexts, bool provides_certificates) override {
+    return inner_->initializeSslContexts(contexts, provides_certificates);
+  };
+
+private:
+  std::shared_ptr<RatsTlsCertValidatorInner> inner_;
 };
 
 DECLARE_FACTORY(RatsTlsCertValidatorFactory);

@@ -16,6 +16,7 @@
 #include "envoy/ssl/ssl_socket_extended_info.h"
 #include "envoy/extensions/transport_sockets/tls/v3/rats_tls.pb.h"
 
+#include "source/common/rats_tls/worker.h"
 #include "source/common/common/assert.h"
 #include "source/common/common/fmt.h"
 #include "source/common/common/hex.h"
@@ -30,8 +31,7 @@
 #include "openssl/pem.h"
 #include "rats-rs/rats-rs.h"
 
-#define MAX_NUMS_OF_POLICY_IDS 16
-#define MAX_NUMS_OF_TRUSTED_CERTS_PATHS 8
+constexpr int kRatsRsVerifyCertRetryWaitSecond = 2;
 
 namespace Envoy {
 namespace Extensions {
@@ -98,17 +98,17 @@ convertConfigToVerifyPolicy(const RatsTlsCertValidatorConfig& validator_config) 
   return verify_policy;
 }
 
-void logSslErrorChain() {
+void RatsTlsCertValidatorInner::logSslErrorChain() {
   while (uint64_t err = ERR_get_error()) {
-    ENVOY_LOG_MISC(debug, "SSL error: {}:{}:{}:{}:{}", err,
-                   absl::NullSafeStringView(ERR_lib_error_string(err)),
-                   absl::NullSafeStringView(ERR_func_error_string(err)), ERR_GET_REASON(err),
-                   absl::NullSafeStringView(ERR_reason_error_string(err)));
+    ENVOY_LOG(error, "Got SSL error: {}:{}:{}:{}:{}", err,
+              absl::NullSafeStringView(ERR_lib_error_string(err)),
+              absl::NullSafeStringView(ERR_func_error_string(err)), ERR_GET_REASON(err),
+              absl::NullSafeStringView(ERR_reason_error_string(err)));
   }
 }
 
 // Convert an OpenSSL X509 object to pem cert string
-bool x509ToPem(X509* cert, std::string& pem_cert) {
+bool RatsTlsCertValidatorInner::x509ToPem(X509* cert, std::string& pem_cert) {
   // Create a BIO object to hold the PEM certificate
   BIO* bio = BIO_new(BIO_s_mem());
   RELEASE_ASSERT(bio != nullptr, "");
@@ -135,10 +135,12 @@ bool x509ToPem(X509* cert, std::string& pem_cert) {
   return true;
 }
 
-RatsTlsCertValidator::RatsTlsCertValidator(
+RatsTlsCertValidatorInner::RatsTlsCertValidatorInner(
     const Envoy::Ssl::CertificateValidationContextConfig* config, SslStats& stats,
     Server::Configuration::CommonFactoryContext& context)
-    : DefaultCertValidator(config, stats, context), stats_(stats) {
+    : DefaultCertValidator(config, stats, context), stats_(stats),
+      rats_tls_worker_dispatcher_(
+          Envoy::Common::RatsTls::getRatsTlsWorker(context.api()).dispatcher()) {
 
   this->validator_config_ = std::make_unique<RatsTlsCertValidatorConfig>();
   if (!config->customValidatorConfig().has_value()) {
@@ -151,19 +153,82 @@ RatsTlsCertValidator::RatsTlsCertValidator(
   this->verify_policy_ = convertConfigToVerifyPolicy(*this->validator_config_);
 };
 
-int RatsTlsCertValidator::initializeSslContexts(std::vector<SSL_CTX*> contexts,
-                                                bool provides_certificates) {
-  [[maybe_unused]] auto& ctx = contexts;
-  [[maybe_unused]] bool tpp = provides_certificates;
+int RatsTlsCertValidatorInner::initializeSslContexts(std::vector<SSL_CTX*> /* contexts */,
+                                                     bool /* provides_certificates */) {
   return SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
 }
 
-ValidationResults RatsTlsCertValidator::doVerifyCertChain(
-    STACK_OF(X509)& cert_chain, Ssl::ValidateResultCallbackPtr /*callback*/,
-    [[maybe_unused]] const Network::TransportSocketOptionsConstSharedPtr& transport_socket_options,
-    [[maybe_unused]] SSL_CTX& ssl_ctx,
-    const CertValidator::ExtraValidationContext& /*validation_context*/,
-    [[maybe_unused]] bool is_server, absl::string_view /*host_name*/) {
+ValidationResults
+RatsTlsCertValidatorInner::verifyRatsTlsCertPem(std::string& certificate) noexcept {
+  // Verify cert with rats-rs
+  rats_rs_verify_policy_output_t verify_policy_output = RATS_RS_VERIFY_POLICY_OUTPUT_FAILED;
+  rats_rs_error_obj_t* rats_rs_error_obj = nullptr;
+
+  int current_try = 1;
+  while (true) {
+    if (current_try != 1) {
+      ENVOY_LOG(info, "verify rats-tls cert with rats-rs ({} attempts)", current_try);
+    }
+
+    rats_rs_error_obj = rats_rs_verify_cert(
+        reinterpret_cast<const uint8_t*>(certificate.c_str()), certificate.size(),
+        this->verify_policy_->rats_rs_verify_policy, &verify_policy_output);
+
+    if (rats_rs_error_obj == nullptr) { // We have a good luck
+      break;
+    } else {
+      rats_rs_error_msg_t rats_rs_error_msg = rats_rs_err_get_msg_ref(rats_rs_error_obj);
+      ENVOY_LOG(warn,
+                "Failed to verify rats-tls cert with rats-rs ({} attempts): "
+                "Error kind: {:#x}, msg: {:.{}s}",
+                current_try, rats_rs_err_get_kind(rats_rs_error_obj), rats_rs_error_msg.msg,
+                rats_rs_error_msg.msg_len);
+      if (current_try == 5) {
+        break;
+      }
+      rats_rs_err_free(rats_rs_error_obj);
+      rats_rs_error_obj = nullptr;
+      std::this_thread::sleep_for(std::chrono::seconds(kRatsRsVerifyCertRetryWaitSecond));
+    }
+    current_try++;
+  }
+
+  if (rats_rs_error_obj == nullptr) {
+    if (verify_policy_output == RATS_RS_VERIFY_POLICY_OUTPUT_PASSED) {
+      ENVOY_LOG(debug, "The evaluation result of rats-tls cert is PASSED");
+    } else {
+      auto error_msg = "The evaluation result of rats-tls cert is FAILED";
+      ENVOY_LOG(error, error_msg);
+      stats_.fail_verify_error_.inc();
+      return ValidationResults{ValidationResults::ValidationStatus::Failed,
+                               Envoy::Ssl::ClientValidationStatus::Failed, SSL_AD_BAD_CERTIFICATE,
+                               error_msg};
+    }
+  } else {
+    stats_.fail_verify_error_.inc();
+    rats_rs_error_msg_t rats_rs_error_msg = rats_rs_err_get_msg_ref(rats_rs_error_obj);
+    auto error_msg = fmt::format(
+        "Failed to verify rats-tls cert with rats-rs: Error kind: {:#x}, msg: {:.{}s}",
+        rats_rs_err_get_kind(rats_rs_error_obj), rats_rs_error_msg.msg, rats_rs_error_msg.msg_len);
+    rats_rs_err_free(rats_rs_error_obj);
+    rats_rs_error_obj = nullptr;
+    ENVOY_LOG(error, error_msg);
+    return ValidationResults{ValidationResults::ValidationStatus::Failed,
+                             Envoy::Ssl::ClientValidationStatus::Failed, SSL_AD_BAD_CERTIFICATE,
+                             error_msg};
+  }
+
+  ENVOY_LOG(info, "The rats-tls certificate validation is passed");
+  return ValidationResults{ValidationResults::ValidationStatus::Successful,
+                           Envoy::Ssl::ClientValidationStatus::Validated, absl::nullopt,
+                           absl::nullopt};
+}
+
+ValidationResults RatsTlsCertValidatorInner::doVerifyCertChain(
+    STACK_OF(X509)& cert_chain, Ssl::ValidateResultCallbackPtr callback,
+    const Network::TransportSocketOptionsConstSharedPtr& /* transport_socket_options */,
+    SSL_CTX& /* ssl_ctx */, const CertValidator::ExtraValidationContext& /* validation_context */,
+    bool /* is_server */, absl::string_view /* host_name */) {
 
   ENVOY_LOG(info, "Verifing rats-tls cert");
 
@@ -190,66 +255,26 @@ ValidationResults RatsTlsCertValidator::doVerifyCertChain(
                              error_msg};
   }
 
-  // Verify cert with rats-rs
-  rats_rs_verify_policy_output_t verify_policy_output = RATS_RS_VERIFY_POLICY_OUTPUT_FAILED;
-  rats_rs_error_obj_t* rats_rs_error_obj = nullptr;
-
-  int current_try = 1;
-  while (true) {
-    if (current_try != 1) {
-      ENVOY_LOG(info, "verify rats-tls cert with rats-rs ({} attempts)", current_try);
-    }
-
-    rats_rs_error_obj = rats_rs_verify_cert(
-        reinterpret_cast<const uint8_t*>(certificate.c_str()), certificate.size(),
-        this->verify_policy_->rats_rs_verify_policy, &verify_policy_output);
-
-    if (rats_rs_error_obj == nullptr) { // We have a good luck
-      break;
+  auto weak_self = weak_from_this();
+  this->rats_tls_worker_dispatcher_.post([weak_self, certificate = std::move(certificate),
+                                          callback = std::move(callback)]() mutable -> void {
+    if (auto self = weak_self.lock()) {
+      ValidationResults result = self->verifyRatsTlsCertPem(certificate);
+      Event::Dispatcher& dispatcher = callback->dispatcher();
+      dispatcher.post([result = std::move(result), callback = std::move(callback)]() -> void {
+        callback->onCertValidationResult(
+            result.status == ValidationResults::ValidationStatus::Successful,
+            result.detailed_status,
+            (result.error_details.has_value() ? result.error_details.value() : ""),
+            (result.tls_alert.has_value() ? result.tls_alert.value() : SSL_AD_CERTIFICATE_UNKNOWN));
+      });
     } else {
-      rats_rs_error_msg_t rats_rs_error_msg = rats_rs_err_get_msg_ref(rats_rs_error_obj);
-      ENVOY_LOG(warn,
-                "Failed to verify rats-tls cert with rats-rs ({} attempts): "
-                "Error kind: {:#x}, msg: {:.{}s}",
-                current_try, rats_rs_err_get_kind(rats_rs_error_obj), rats_rs_error_msg.msg,
-                rats_rs_error_msg.msg_len);
-      rats_rs_err_free(rats_rs_error_obj);
-      if (current_try == 5) {
-        break;
-      }
-      std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+      ENVOY_LOG(error, "The std::weak_ptr<RatsTlsCertValidatorInner> is empty and maybe released");
     }
-    current_try++;
-  }
+  });
 
-  if (rats_rs_error_obj == nullptr) {
-    if (verify_policy_output == RATS_RS_VERIFY_POLICY_OUTPUT_PASSED) {
-      ENVOY_LOG(debug, "The evaluation result of rats-tls cert is PASSED");
-    } else {
-      auto error_msg = "The evaluation result of rats-tls cert is FAILED";
-      ENVOY_LOG(error, error_msg);
-      stats_.fail_verify_error_.inc();
-      return ValidationResults{ValidationResults::ValidationStatus::Failed,
-                               Envoy::Ssl::ClientValidationStatus::Failed, SSL_AD_BAD_CERTIFICATE,
-                               error_msg};
-    }
-  } else {
-    stats_.fail_verify_error_.inc();
-    rats_rs_error_msg_t rats_rs_error_msg = rats_rs_err_get_msg_ref(rats_rs_error_obj);
-    auto error_msg = fmt::format(
-        "Failed to verify rats-tls cert with rats-rs: Error kind: {:#x}, msg: {:.{}s}",
-        rats_rs_err_get_kind(rats_rs_error_obj), rats_rs_error_msg.msg, rats_rs_error_msg.msg_len);
-    rats_rs_err_free(rats_rs_error_obj);
-    ENVOY_LOG(error, error_msg);
-    return ValidationResults{ValidationResults::ValidationStatus::Failed,
-                             Envoy::Ssl::ClientValidationStatus::Failed, SSL_AD_BAD_CERTIFICATE,
-                             error_msg};
-  }
-
-  ENVOY_LOG(info, "The rats-tls certificate validation is passed");
-  return ValidationResults{ValidationResults::ValidationStatus::Successful,
-                           Envoy::Ssl::ClientValidationStatus::Validated, absl::nullopt,
-                           absl::nullopt};
+  return {ValidationResults::ValidationStatus::Pending,
+          Envoy::Ssl::ClientValidationStatus::NotValidated, absl::nullopt, absl::nullopt};
 }
 
 class RatsTlsCertValidatorFactory : public CertValidatorFactory {

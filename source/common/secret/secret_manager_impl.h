@@ -39,6 +39,7 @@ public:
       override;
 
   TlsCertificateConfigProviderSharedPtr createRatsTlsCertificateProvider(
+      Api::Api& api, Event::Dispatcher& main_thread_dispatcher,
       const envoy::extensions::transport_sockets::tls::v3::RatsTlsCertGeneratorConfig&
           rats_tls_cert_generator_config) override;
 

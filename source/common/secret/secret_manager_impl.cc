@@ -109,9 +109,11 @@ TlsCertificateConfigProviderSharedPtr SecretManagerImpl::createInlineTlsCertific
 }
 
 TlsCertificateConfigProviderSharedPtr SecretManagerImpl::createRatsTlsCertificateProvider(
+    Api::Api& api, Event::Dispatcher& main_thread_dispatcher,
     const envoy::extensions::transport_sockets::tls::v3::RatsTlsCertGeneratorConfig&
         rats_tls_cert_generator_config) {
-  return std::make_shared<RatsTlsCertificateConfigProviderImpl>(rats_tls_cert_generator_config);
+  return std::make_shared<RatsTlsCertificateConfigProviderImpl>(api, main_thread_dispatcher,
+                                                                rats_tls_cert_generator_config);
 }
 
 CertificateValidationContextConfigProviderSharedPtr

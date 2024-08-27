@@ -2,12 +2,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <thread>
 #include <chrono>
 
 #include "envoy/extensions/transport_sockets/tls/v3/cert.pb.h"
 
+#include "source/common/rats_tls/worker.h"
 #include "source/common/common/assert.h"
 #include "source/common/common/hex.h"
 #include "source/common/ssl/certificate_validation_context_config_impl.h"
@@ -21,24 +23,71 @@
 #include "rats-rs/rats-rs.h"
 
 constexpr int kMaxNumsOfPolicyIds = 16;
+constexpr int kCertUpdateIntervalSecond = 60 * 60; // 1 hour
+constexpr int kRatsRsCreateCertTimeoutSecond = 30;
+constexpr int kRatsRsCreateCertRetryWaitSecond = 2;
 
 namespace Envoy {
 namespace Secret {
 
 RatsTlsCertificateConfigProviderImpl::RatsTlsCertificateConfigProviderImpl(
+    Api::Api& api, Event::Dispatcher& main_thread_dispatcher,
+    const envoy::extensions::transport_sockets::tls::v3::RatsTlsCertGeneratorConfig&
+        rats_tls_cert_generator_config)
+    : cert_updater_(std::make_shared<RatsTlsCertificateUpdater>(api, main_thread_dispatcher,
+                                                                rats_tls_cert_generator_config)) {
+
+  // Generate cert once
+  this->cert_updater_->tls_certificate_ = this->cert_updater_->generateCertOnceBlocking();
+  this->cert_updater_->enableUpdater();
+}
+
+RatsTlsCertificateUpdater::RatsTlsCertificateUpdater(
+    Api::Api& api, Event::Dispatcher& main_thread_dispatcher,
     const envoy::extensions::transport_sockets::tls::v3::RatsTlsCertGeneratorConfig&
         rats_tls_cert_generator_config)
     : rats_tls_cert_generator_config_(
           std::make_unique<
               envoy::extensions::transport_sockets::tls::v3::RatsTlsCertGeneratorConfig>(
               rats_tls_cert_generator_config)),
-      tls_certificate_(
-          std::make_unique<envoy::extensions::transport_sockets::tls::v3::TlsCertificate>()) {}
+      api_(api), main_thread_dispatcher_(main_thread_dispatcher),
+      rats_tls_worker_dispatcher_(Envoy::Common::RatsTls::getRatsTlsWorker(api_)
+                                      .dispatcher()), // Init the static Dispatcher and Thread
+      update_callback_manager_(Common::ThreadSafeCallbackManager::create()),
+      tls_certificate_(nullptr), cert_update_timer_(nullptr) {}
 
-std::pair<std::string, std::string>
-RatsTlsCertificateConfigProviderImpl::genCertWithConfig() const {
+void RatsTlsCertificateUpdater::enableUpdater() {
+  // Create a Timer for updating certs
+  auto weak_self = weak_from_this();
+
+  rats_tls_worker_dispatcher_.post([weak_self]() -> void {
+    if (auto self = weak_self.lock()) {
+      ENVOY_LOG(info, "Setting up rats-tls cert update task");
+      self->cert_update_timer_ =
+          self->rats_tls_worker_dispatcher_.createTimer([weak_self]() -> void {
+            ENVOY_LOG(info, "Running rats-tls cert update task (interval: {} seconds)",
+                      kCertUpdateIntervalSecond);
+            if (auto self = weak_self.lock()) {
+              self->tls_certificate_ = self->generateCertOnceBlocking();
+              self->update_callback_manager_->runCallbacks();
+              self->cert_update_timer_->enableTimer(
+                  std::chrono::seconds(kCertUpdateIntervalSecond));
+            } else {
+              ENVOY_LOG(info, "The std::weak_ptr<RatsTlsCertificateUpdater> is empty and maybe "
+                              "released, pausing rats-tls update task now");
+            }
+          });
+      // Enable the timer
+      self->cert_update_timer_->enableTimer(std::chrono::seconds(kCertUpdateIntervalSecond));
+    }
+  });
+}
+
+std::unique_ptr<envoy::extensions::transport_sockets::tls::v3::TlsCertificate>
+RatsTlsCertificateUpdater::generateCertOnceBlocking() const {
+  ENVOY_LOG(info, "Generating rats-tls X509 cert");
+
   // TODO: align rats-rs log level with envoy
-  // TODO: check reference assign or value assign
   if (this->rats_tls_cert_generator_config_->has_coco_attester()) {
     auto& coco_attester = this->rats_tls_cert_generator_config_->coco_attester();
     const char* tmp_policy_ids[kMaxNumsOfPolicyIds] = {nullptr};
@@ -71,7 +120,7 @@ RatsTlsCertificateConfigProviderImpl::genCertWithConfig() const {
     attester_type.tag = RATS_RS_ATTESTER_TYPE_COCO;
     attester_type.COCO.attest_mode = attest_mode;
     attester_type.COCO.aa_addr = coco_attester.aa_addr().c_str();
-    attester_type.COCO.timeout = 5ll * 1000 * 1000 * 1000; /* 5s */
+    attester_type.COCO.timeout_nano = (kRatsRsCreateCertTimeoutSecond) * 1000ll * 1000 * 1000;
 
     rats_rs_error_obj_t* rats_rs_error_obj = nullptr;
     uint8_t* privkey_out = nullptr;
@@ -98,11 +147,12 @@ RatsTlsCertificateConfigProviderImpl::genCertWithConfig() const {
                   "Error kind: {:#x}, msg: {:.{}s}",
                   current_try, rats_rs_err_get_kind(rats_rs_error_obj), rats_rs_error_msg.msg,
                   rats_rs_error_msg.msg_len);
-        rats_rs_err_free(rats_rs_error_obj);
         if (current_try == 5) {
           break;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+        rats_rs_err_free(rats_rs_error_obj);
+        rats_rs_error_obj = nullptr;
+        std::this_thread::sleep_for(std::chrono::seconds(kRatsRsCreateCertRetryWaitSecond));
       }
       current_try++;
     }
@@ -114,6 +164,7 @@ RatsTlsCertificateConfigProviderImpl::genCertWithConfig() const {
           rats_rs_err_get_kind(rats_rs_error_obj), rats_rs_error_msg.msg,
           rats_rs_error_msg.msg_len);
       rats_rs_err_free(rats_rs_error_obj);
+      rats_rs_error_obj = nullptr;
       throw EnvoyException(exception_msg);
     }
     // The private key in PEM format
@@ -122,7 +173,20 @@ RatsTlsCertificateConfigProviderImpl::genCertWithConfig() const {
     std::string certificate(reinterpret_cast<const char*>(certificate_out), certificate_len_out);
     rats_rs_rust_free(certificate_out, certificate_len_out);
 
-    return std::make_pair(private_key, certificate);
+    ENVOY_LOG(debug, "The rats-tls X509 cert is generated successfully: {}", certificate);
+
+    // Create DataSource
+    envoy::config::core::v3::DataSource* ds_cert_chain = new envoy::config::core::v3::DataSource();
+    envoy::config::core::v3::DataSource* ds_private_key = new envoy::config::core::v3::DataSource();
+    ds_cert_chain->set_inline_bytes(std::move(certificate));
+    ds_private_key->set_inline_bytes(std::move(private_key));
+
+    auto tls_certificate =
+        std::make_unique<envoy::extensions::transport_sockets::tls::v3::TlsCertificate>();
+    tls_certificate->set_allocated_certificate_chain(ds_cert_chain);
+    tls_certificate->set_allocated_private_key(ds_private_key);
+
+    return tls_certificate;
   } else {
     throw EnvoyException("The field `coco_attester` must be set");
   }
@@ -130,22 +194,7 @@ RatsTlsCertificateConfigProviderImpl::genCertWithConfig() const {
 
 const envoy::extensions::transport_sockets::tls::v3::TlsCertificate*
 RatsTlsCertificateConfigProviderImpl::secret() const {
-  ENVOY_LOG(info, "Generating rats-tls X509 cert");
-
-  auto [private_key, certificate] = this->genCertWithConfig();
-
-  ENVOY_LOG(debug, "The rats-tls X509 cert is generated successfully: {}", certificate);
-
-  envoy::config::core::v3::DataSource* ds_cert_chain = new envoy::config::core::v3::DataSource();
-  envoy::config::core::v3::DataSource* ds_private_key = new envoy::config::core::v3::DataSource();
-  ds_cert_chain->set_inline_bytes(std::move(certificate));
-  ds_private_key->set_inline_bytes(std::move(private_key));
-  tls_certificate_->set_allocated_certificate_chain(ds_cert_chain);
-  tls_certificate_->set_allocated_private_key(ds_private_key);
-
-  // TODO: ensure that old tls_certificate_ content will not be used after call sercet() second
-  // time.
-  return tls_certificate_.get();
+  return this->cert_updater_->tls_certificate_.get();
 }
 
 } // namespace Secret

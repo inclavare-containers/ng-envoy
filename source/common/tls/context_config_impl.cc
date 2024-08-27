@@ -5,6 +5,7 @@
 
 #include "envoy/extensions/transport_sockets/tls/v3/cert.pb.h"
 
+#include "envoy/api/api.h"
 #include "source/common/common/assert.h"
 #include "source/common/common/empty_string.h"
 #include "source/common/config/datasource.h"
@@ -62,6 +63,8 @@ std::vector<Secret::TlsCertificateConfigProviderSharedPtr> getTlsCertificateConf
     // Load rats-tls cert generation config.
     for (const auto& rats_tls_cert_generator_config : config.rats_tls_cert_generator_configs()) {
       providers.push_back(factory_context.secretManager().createRatsTlsCertificateProvider(
+          factory_context.serverFactoryContext().api(),
+          factory_context.serverFactoryContext().mainThreadDispatcher(),
           rats_tls_cert_generator_config));
     }
     return providers;

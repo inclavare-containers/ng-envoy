@@ -6,6 +6,7 @@
 #include "envoy/extensions/transport_sockets/tls/v3/cert.pb.h"
 #include "envoy/extensions/transport_sockets/tls/v3/rats_tls.pb.h"
 #include "envoy/secret/secret_provider.h"
+#include "envoy/api/api.h"
 
 namespace Envoy {
 
@@ -70,6 +71,7 @@ public:
   virtual TlsCertificateConfigProviderSharedPtr createInlineTlsCertificateProvider(
       const envoy::extensions::transport_sockets::tls::v3::TlsCertificate& tls_certificate) PURE;
   virtual TlsCertificateConfigProviderSharedPtr createRatsTlsCertificateProvider(
+      Api::Api& api, Event::Dispatcher& main_thread_dispatcher,
       const envoy::extensions::transport_sockets::tls::v3::RatsTlsCertGeneratorConfig&
           rats_tls_cert_generator_config) PURE;
 
