@@ -52,7 +52,8 @@ private:
 
   static bool x509ToPem(X509* cert, std::string& pem_cert);
 
-  ValidationResults verifyRatsTlsCertPem(std::string& certificate) noexcept;
+  std::pair<ValidationResults, std::string>
+  verifyRatsTlsCertPem(std::string& certificate, absl::optional<std::string>& authority) noexcept;
 
   std::unique_ptr<RatsTlsCertValidatorConfig> validator_config_;
   std::unique_ptr<VerifyPolicy> verify_policy_;

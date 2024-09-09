@@ -9,6 +9,7 @@
 
 #include "envoy/http/codes.h"
 
+#include "source/common/rats_tls/attestation_info.h"
 #include "source/common/buffer/buffer_impl.h"
 #include "source/common/common/assert.h"
 #include "source/common/common/enum_to_int.h"
@@ -795,6 +796,22 @@ int StreamHandleWrapper::luaTimestampString(lua_State* state) {
   } else {
     luaL_error(state, "timestamp format must be MILLISECOND or MICROSECOND.");
   }
+  return 1;
+}
+
+int StreamHandleWrapper::luaAttestationInfo(lua_State* state) {
+  ASSERT(state_ == State::Running);
+  std::string authority = std::string(Filters::Common::Lua::getStringViewFromLuaString(state, 2));
+
+  std::string attestation_info = "";
+
+  auto iter = Envoy::Common::RatsTls::RatsTlsAttestationInfo::local_storage.find(authority);
+  if (iter != Envoy::Common::RatsTls::RatsTlsAttestationInfo::local_storage.end()) {
+    attestation_info = iter->second;
+  }
+
+  lua_pushlstring(state, attestation_info.data(), attestation_info.size());
+
   return 1;
 }
 

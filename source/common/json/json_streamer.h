@@ -85,6 +85,8 @@ public:
      */
     void addString(absl::string_view str);
 
+    void addBoolean(bool b);
+
   protected:
     /**
      * Initiates a new field, serializing a comma separator if this is not the
@@ -201,6 +203,8 @@ private:
   void addNumber(double d);
   void addNumber(uint64_t u);
   void addNumber(int64_t i);
+
+  void addBoolean(bool b);
 
   /**
    * Flushes out any pending fragments.

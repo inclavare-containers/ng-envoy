@@ -88,6 +88,12 @@ void Streamer::Level::addString(absl::string_view str) {
   streamer_.addSanitized("\"", str, "\"");
 }
 
+void Streamer::Level::addBoolean(bool b) {
+  ASSERT_THIS_IS_TOP_LEVEL;
+  nextField();
+  streamer_.addBoolean(b);
+}
+
 #ifndef NDEBUG
 void Streamer::pop(Level* level) {
   ASSERT(levels_.top() == level);
@@ -165,6 +171,8 @@ void Streamer::addNumber(double number) {
 void Streamer::addNumber(uint64_t number) { response_.addFragments({absl::StrCat(number)}); }
 
 void Streamer::addNumber(int64_t number) { response_.addFragments({absl::StrCat(number)}); }
+
+void Streamer::addBoolean(bool b) { response_.addFragments({(b ? "true" : "false")}); }
 
 void Streamer::addSanitized(absl::string_view prefix, absl::string_view str,
                             absl::string_view suffix) {

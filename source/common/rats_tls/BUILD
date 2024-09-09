@@ -24,3 +24,20 @@ envoy_cc_library(
         "//source/common/common:utility_lib",
     ],
 )
+
+envoy_cc_library(
+    name = "attestation_info_lib",
+    srcs = [
+        "attestation_info.cc",
+    ],
+    hdrs = [
+        "attestation_info.h",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//envoy/api:api_interface",
+        "//source/common/common:assert_lib",
+        "//source/common/common:minimal_logger_lib",
+        "//source/common/common:utility_lib",
+    ],
+)

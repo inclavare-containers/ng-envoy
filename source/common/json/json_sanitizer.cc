@@ -65,7 +65,7 @@ absl::string_view sanitize(std::string& buffer, absl::string_view str) {
   if (need_slow == 0) {
     return str; // Fast path, should be executed most of the time.
   }
-  TRY_ASSERT_MAIN_THREAD {
+  try {
     // The Nlohmann JSON library supports serialization and is not too slow. A
     // hand-rolled sanitizer can be a little over 2x faster at the cost of added
     // production complexity. The main drawback is that this code cannot be used
@@ -75,7 +75,6 @@ absl::string_view sanitize(std::string& buffer, absl::string_view str) {
     buffer = Nlohmann::Factory::serialize(str);
     return stripDoubleQuotes(buffer);
   }
-  END_TRY
   catch (std::exception&) {
     // If Nlohmann throws an error, emit an octal escape for any character
     // requiring it. This can occur for invalid utf-8 sequences, and we don't

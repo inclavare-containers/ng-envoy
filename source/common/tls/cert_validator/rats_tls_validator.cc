@@ -17,6 +17,7 @@
 #include "envoy/extensions/transport_sockets/tls/v3/rats_tls.pb.h"
 
 #include "source/common/rats_tls/worker.h"
+#include "source/common/rats_tls/attestation_info.h"
 #include "source/common/common/assert.h"
 #include "source/common/common/fmt.h"
 #include "source/common/common/hex.h"
@@ -27,6 +28,9 @@
 #include "source/common/tls/cert_validator/utility.h"
 #include "source/common/tls/stats.h"
 #include "source/common/tls/utility.h"
+#include "source/common/buffer/buffer_impl.h"
+#include "source/common/json/json_streamer.h"
+#include "source/common/common/hex.h"
 
 #include "openssl/pem.h"
 #include "rats-rs/rats-rs.h"
@@ -35,6 +39,8 @@ namespace Envoy {
 namespace Extensions {
 namespace TransportSockets {
 namespace Tls {
+
+constexpr const char* kTngFilterStateObjectName = "io.inclavare-containers.tng.authority";
 
 std::unique_ptr<VerifyPolicy>
 convertConfigToVerifyPolicy(const RatsTlsCertValidatorConfig& validator_config) {
@@ -156,26 +162,94 @@ int RatsTlsCertValidatorInner::initializeSslContexts(std::vector<SSL_CTX*> /* co
   return SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
 }
 
-ValidationResults
-RatsTlsCertValidatorInner::verifyRatsTlsCertPem(std::string& certificate) noexcept {
+rats_rs_verify_policy_output_t custom_verifier_func_cpp_wrapper(const rats_rs_claim_t* claims,
+                                                                size_t claims_len, void* args) {
+  return (
+      *static_cast<std::function<rats_rs_verify_policy_output_t(const rats_rs_claim_t*, size_t)>*>(
+          args))(claims, claims_len);
+};
+
+std::pair<ValidationResults, std::string>
+RatsTlsCertValidatorInner::verifyRatsTlsCertPem(std::string& certificate,
+                                                absl::optional<std::string>& authority) noexcept {
   // Verify cert with rats-rs
   rats_rs_verify_policy_output_t verify_policy_output = RATS_RS_VERIFY_POLICY_OUTPUT_FAILED;
   rats_rs_error_obj_t* rats_rs_error_obj = nullptr;
 
+  Buffer::OwnedImpl attestation_info_buffer;
+  Json::Streamer streamer{attestation_info_buffer};
+  Json::Streamer::MapPtr attestation_info = streamer.makeRootMap();
+  attestation_info->addKey("target_url");
+  attestation_info->addString(
+      authority.value_or("null")); // TODO: better way to handle case when authority is null
+  attestation_info->addKey("trustee_url");
+  if (this->verify_policy_->rats_rs_verify_policy.COCO.verify_mode.tag ==
+      RATS_RS_COCO_VERIFY_MODE_EVIDENCE) {
+    attestation_info->addString(
+        this->verify_policy_->rats_rs_verify_policy.COCO.verify_mode.EVIDENCE.as_addr);
+  } else {
+    attestation_info->addString("null");
+  }
+
+  attestation_info->addKey("policy_ids");
+  Json::Streamer::ArrayPtr policy_ids = attestation_info->addArray();
+  for (size_t i = 0; i < this->verify_policy_->rats_rs_verify_policy.COCO.policy_ids_len; ++i) {
+    policy_ids->addString(this->verify_policy_->rats_rs_verify_policy.COCO.policy_ids[i]);
+  }
+  policy_ids.reset();
+
+  auto callback = std::function<rats_rs_verify_policy_output_t(const rats_rs_claim_t*, size_t)>(
+      [&](const rats_rs_claim_t* c_claims, size_t c_claims_len) -> rats_rs_verify_policy_output_t {
+        attestation_info->addKey("claims");
+        Json::Streamer::MapPtr claims = attestation_info->addMap();
+        for (size_t i = 0; i < c_claims_len; i++) {
+          claims->addKey(c_claims[i].name);
+          // TODO: change rats-rs api claim value type to string
+          absl::string_view maybe_string(reinterpret_cast<const char*>(c_claims[i].value),
+                                         c_claims[i].value_len);
+          if (maybe_string == MessageUtil::sanitizeUtf8String(maybe_string)) {
+            claims->addString(maybe_string);
+          } else {
+            claims->addString(Hex::encode(c_claims[i].value, c_claims[i].value_len));
+          }
+        }
+        claims.reset();
+        return RATS_RS_VERIFY_POLICY_OUTPUT_PASSED;
+      });
+
+  // Copy verify_policy and modify locally
+  rats_rs_verify_policy_t rats_rs_verify_policy = this->verify_policy_->rats_rs_verify_policy;
+  rats_rs_verify_policy.COCO.claims_check.tag = RATS_RS_CLAIMS_CHECK_CUSTOM;
+  rats_rs_verify_policy.COCO.claims_check.CUSTOM.func = custom_verifier_func_cpp_wrapper;
+  rats_rs_verify_policy.COCO.claims_check.CUSTOM.args = &callback;
+
   rats_rs_error_obj =
       rats_rs_verify_cert(reinterpret_cast<const uint8_t*>(certificate.c_str()), certificate.size(),
-                          this->verify_policy_->rats_rs_verify_policy, &verify_policy_output);
+                          rats_rs_verify_policy, &verify_policy_output);
 
   if (rats_rs_error_obj == nullptr) {
     if (verify_policy_output == RATS_RS_VERIFY_POLICY_OUTPUT_PASSED) {
       ENVOY_LOG(debug, "The evaluation result of rats-tls cert is PASSED");
+      attestation_info->addKey("is_secure");
+      attestation_info->addBoolean(true);
+      attestation_info.reset();
+      return std::make_pair(ValidationResults{ValidationResults::ValidationStatus::Successful,
+                                              Envoy::Ssl::ClientValidationStatus::Validated,
+                                              absl::nullopt, absl::nullopt},
+                            attestation_info_buffer.toString());
     } else {
       auto error_msg = "The evaluation result of rats-tls cert is FAILED";
       ENVOY_LOG(error, error_msg);
       stats_.fail_verify_error_.inc();
-      return ValidationResults{ValidationResults::ValidationStatus::Failed,
-                               Envoy::Ssl::ClientValidationStatus::Failed, SSL_AD_BAD_CERTIFICATE,
-                               error_msg};
+      attestation_info->addKey("msg");
+      attestation_info->addString(error_msg);
+      attestation_info->addKey("is_secure");
+      attestation_info->addBoolean(false);
+      attestation_info.reset();
+      return std::make_pair(ValidationResults{ValidationResults::ValidationStatus::Failed,
+                                              Envoy::Ssl::ClientValidationStatus::Failed,
+                                              SSL_AD_BAD_CERTIFICATE, error_msg},
+                            attestation_info_buffer.toString());
     }
   } else {
     stats_.fail_verify_error_.inc();
@@ -186,20 +260,21 @@ RatsTlsCertValidatorInner::verifyRatsTlsCertPem(std::string& certificate) noexce
     rats_rs_err_free(rats_rs_error_obj);
     rats_rs_error_obj = nullptr;
     ENVOY_LOG(error, error_msg);
-    return ValidationResults{ValidationResults::ValidationStatus::Failed,
-                             Envoy::Ssl::ClientValidationStatus::Failed, SSL_AD_BAD_CERTIFICATE,
-                             error_msg};
+    attestation_info->addKey("msg");
+    attestation_info->addString(error_msg);
+    attestation_info->addKey("is_secure");
+    attestation_info->addBoolean(false);
+    attestation_info.reset();
+    return std::make_pair(ValidationResults{ValidationResults::ValidationStatus::Failed,
+                                            Envoy::Ssl::ClientValidationStatus::Failed,
+                                            SSL_AD_BAD_CERTIFICATE, error_msg},
+                          attestation_info_buffer.toString());
   }
-
-  ENVOY_LOG(info, "The rats-tls certificate validation is passed");
-  return ValidationResults{ValidationResults::ValidationStatus::Successful,
-                           Envoy::Ssl::ClientValidationStatus::Validated, absl::nullopt,
-                           absl::nullopt};
 }
 
 ValidationResults RatsTlsCertValidatorInner::doVerifyCertChain(
     STACK_OF(X509)& cert_chain, Ssl::ValidateResultCallbackPtr callback,
-    const Network::TransportSocketOptionsConstSharedPtr& /* transport_socket_options */,
+    const Network::TransportSocketOptionsConstSharedPtr& transport_socket_options,
     SSL_CTX& /* ssl_ctx */, const CertValidator::ExtraValidationContext& /* validation_context */,
     bool /* is_server */, absl::string_view /* host_name */) {
 
@@ -228,13 +303,36 @@ ValidationResults RatsTlsCertValidatorInner::doVerifyCertChain(
                              error_msg};
   }
 
+  // Get authority from filter state object
+  absl::optional<std::string> authority = absl::nullopt;
+  for (const auto& object : transport_socket_options->downstreamSharedFilterStateObjects()) {
+    if (object.name_ == kTngFilterStateObjectName) {
+      authority = object.data_->serializeAsString();
+      ENVOY_LOG(debug, "The authority of target to be evaluated: {}", *authority);
+      break;
+    }
+  }
+
   auto weak_self = weak_from_this();
   this->rats_tls_worker_dispatcher_.post([weak_self, certificate = std::move(certificate),
+                                          authority = std::move(authority),
                                           callback = std::move(callback)]() mutable -> void {
     if (auto self = weak_self.lock()) {
-      ValidationResults result = self->verifyRatsTlsCertPem(certificate);
+      auto [result, attestation_info_str] = self->verifyRatsTlsCertPem(certificate, authority);
+
       Event::Dispatcher& dispatcher = callback->dispatcher();
-      dispatcher.post([result = std::move(result), callback = std::move(callback)]() -> void {
+      dispatcher.post([result = std::move(result),
+                       attestation_info_str = std::move(attestation_info_str),
+                       authority = std::move(authority), callback = std::move(callback)]() -> void {
+        if (authority != absl::nullopt) {
+          ENVOY_LOG(debug, "Now store attestation info for authority: {}, attestation_info: {}",
+                    *authority, attestation_info_str);
+          Envoy::Common::RatsTls::RatsTlsAttestationInfo::local_storage[*authority] =
+              attestation_info_str;
+        } else {
+          ENVOY_LOG(debug, "The authority of this request is null, skip to store attestation info");
+        }
+
         callback->onCertValidationResult(
             result.status == ValidationResults::ValidationStatus::Successful,
             result.detailed_status,

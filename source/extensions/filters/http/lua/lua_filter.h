@@ -183,6 +183,7 @@ public:
             {"connection", static_luaConnection},
             {"importPublicKey", static_luaImportPublicKey},
             {"verifySignature", static_luaVerifySignature},
+            {"attestationInfo", static_luaAttestationInfo},
             {"base64Escape", static_luaBase64Escape},
             {"timestamp", static_luaTimestamp},
             {"timestampString", static_luaTimestampString},
@@ -316,6 +317,12 @@ private:
    * @return (string) timestamp.
    */
   DECLARE_LUA_FUNCTION(StreamHandleWrapper, luaTimestampString);
+
+  /**
+   * AttestationInfo.
+   * @return (string) attestationInfo of rats-tls.
+   */
+  DECLARE_LUA_FUNCTION(StreamHandleWrapper, luaAttestationInfo);
 
   enum Timestamp::Resolution getTimestampResolution(absl::string_view unit_parameter);
 
