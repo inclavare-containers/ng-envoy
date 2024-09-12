@@ -9,7 +9,6 @@
 
 #include "envoy/extensions/transport_sockets/tls/v3/cert.pb.h"
 
-#include "source/common/rats_tls/worker.h"
 #include "source/common/common/assert.h"
 #include "source/common/common/hex.h"
 #include "source/common/ssl/certificate_validation_context_config_impl.h"
@@ -50,8 +49,8 @@ RatsTlsCertificateUpdater::RatsTlsCertificateUpdater(
               envoy::extensions::transport_sockets::tls::v3::RatsTlsCertGeneratorConfig>(
               rats_tls_cert_generator_config)),
       api_(api), main_thread_dispatcher_(main_thread_dispatcher),
-      rats_tls_worker_dispatcher_(Envoy::Common::RatsTls::getRatsTlsWorker(api_)
-                                      .dispatcher()), // Init the static Dispatcher and Thread
+      rats_tls_worker_(Envoy::Common::RatsTls::allocateRatsTlsWorker(api_)),
+      rats_tls_worker_dispatcher_(rats_tls_worker_->dispatcher()),
       update_callback_manager_(Common::ThreadSafeCallbackManager::create()),
       tls_certificate_(nullptr), cert_update_timer_(nullptr) {}
 

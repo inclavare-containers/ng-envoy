@@ -2,6 +2,7 @@
 
 #include "source/common/common/logger.h"
 #include "source/common/tls/cert_validator/default_validator.h"
+#include "source/common/rats_tls/worker.h"
 
 #include "rats-rs/rats-rs.h"
 #include <memory>
@@ -58,6 +59,7 @@ private:
   std::unique_ptr<RatsTlsCertValidatorConfig> validator_config_;
   std::unique_ptr<VerifyPolicy> verify_policy_;
   SslStats& stats_;
+  std::unique_ptr<Common::RatsTls::RatsTlsWorker> rats_tls_worker_;
   Event::Dispatcher& rats_tls_worker_dispatcher_;
 };
 

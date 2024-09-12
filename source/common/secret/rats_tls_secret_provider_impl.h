@@ -6,6 +6,7 @@
 #include "envoy/ssl/certificate_validation_context_config.h"
 #include "envoy/ssl/tls_certificate_config.h"
 
+#include "source/common/rats_tls/worker.h"
 #include "source/common/common/callback_impl.h"
 #include "source/common/secret/secret_provider_impl.h"
 #include "source/common/common/logger.h"
@@ -34,6 +35,7 @@ private:
   Secret::RatsTlsCertGeneratorConfigPtr rats_tls_cert_generator_config_;
   Api::Api& api_;
   Event::Dispatcher& main_thread_dispatcher_;
+  std::unique_ptr<Common::RatsTls::RatsTlsWorker> rats_tls_worker_;
   Event::Dispatcher& rats_tls_worker_dispatcher_;
   std::shared_ptr<Common::ThreadSafeCallbackManager> update_callback_manager_;
   Secret::TlsCertificatePtr tls_certificate_;

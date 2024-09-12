@@ -16,7 +16,6 @@
 #include "envoy/ssl/ssl_socket_extended_info.h"
 #include "envoy/extensions/transport_sockets/tls/v3/rats_tls.pb.h"
 
-#include "source/common/rats_tls/worker.h"
 #include "source/common/rats_tls/attestation_info.h"
 #include "source/common/common/assert.h"
 #include "source/common/common/fmt.h"
@@ -143,8 +142,8 @@ RatsTlsCertValidatorInner::RatsTlsCertValidatorInner(
     const Envoy::Ssl::CertificateValidationContextConfig* config, SslStats& stats,
     Server::Configuration::CommonFactoryContext& context)
     : DefaultCertValidator(config, stats, context), stats_(stats),
-      rats_tls_worker_dispatcher_(
-          Envoy::Common::RatsTls::getRatsTlsWorker(context.api()).dispatcher()) {
+      rats_tls_worker_(Envoy::Common::RatsTls::allocateRatsTlsWorker(context.api())),
+      rats_tls_worker_dispatcher_(rats_tls_worker_->dispatcher()) {
 
   this->validator_config_ = std::make_unique<RatsTlsCertValidatorConfig>();
   if (!config->customValidatorConfig().has_value()) {
