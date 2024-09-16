@@ -304,11 +304,15 @@ ValidationResults RatsTlsCertValidatorInner::doVerifyCertChain(
 
   // Get authority from filter state object
   absl::optional<std::string> authority = absl::nullopt;
-  for (const auto& object : transport_socket_options->downstreamSharedFilterStateObjects()) {
-    if (object.name_ == kTngFilterStateObjectName) {
-      authority = object.data_->serializeAsString();
-      ENVOY_LOG(debug, "The authority of target to be evaluated: {}", *authority);
-      break;
+  if (transport_socket_options !=
+      nullptr) { // The transport_socket_options.get() maybe null in mut-TLS
+                 // case, during verifing client x509 cert chain. It is a strange behavior.
+    for (const auto& object : transport_socket_options->downstreamSharedFilterStateObjects()) {
+      if (object.name_ == kTngFilterStateObjectName) {
+        authority = object.data_->serializeAsString();
+        ENVOY_LOG(debug, "The authority of target to be evaluated: {}", *authority);
+        break;
+      }
     }
   }
 
