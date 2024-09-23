@@ -61,20 +61,23 @@ void RatsTlsCertificateUpdater::enableUpdater() {
   rats_tls_worker_dispatcher_.post([weak_self]() -> void {
     if (auto self = weak_self.lock()) {
       ENVOY_LOG(info, "Setting up rats-tls cert update task");
-      self->cert_update_timer_ =
-          self->rats_tls_worker_dispatcher_.createTimer([weak_self]() -> void {
-            ENVOY_LOG(info, "Running rats-tls cert update task (interval: {} seconds)",
-                      kCertUpdateIntervalSecond);
-            if (auto self = weak_self.lock()) {
-              self->tls_certificate_ = self->generateCertOnceBlocking();
-              self->update_callback_manager_->runCallbacks();
-              self->cert_update_timer_->enableTimer(
-                  std::chrono::seconds(kCertUpdateIntervalSecond));
-            } else {
-              ENVOY_LOG(info, "The std::weak_ptr<RatsTlsCertificateUpdater> is empty and maybe "
-                              "released, pausing rats-tls update task now");
-            }
-          });
+      self->cert_update_timer_ = self->rats_tls_worker_dispatcher_.createTimer([weak_self]()
+                                                                                   -> void {
+        ENVOY_LOG(info, "Running rats-tls cert update task (interval: {} seconds)",
+                  kCertUpdateIntervalSecond);
+        if (auto self = weak_self.lock()) {
+          try {
+            self->tls_certificate_ = self->generateCertOnceBlocking();
+            self->update_callback_manager_->runCallbacks();
+          } catch (const EnvoyException& e) {
+            ENVOY_LOG(warn, "Updating rats-tls cert failed, old cert will be used: {}", e.what());
+          }
+          self->cert_update_timer_->enableTimer(std::chrono::seconds(kCertUpdateIntervalSecond));
+        } else {
+          ENVOY_LOG(info, "The std::weak_ptr<RatsTlsCertificateUpdater> is empty and maybe "
+                          "released, pausing rats-tls update task now");
+        }
+      });
       // Enable the timer
       self->cert_update_timer_->enableTimer(std::chrono::seconds(kCertUpdateIntervalSecond));
     }
